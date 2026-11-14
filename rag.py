@@ -28,12 +28,36 @@ def answer(question, passages, context, api_key, model):
         "Use only supplied citation IDs; cite tests by experiment and test_id. Do not invent "
         "results or calculate new rankings. Distinguish microgravity evidence from lunar/Mars "
         "assumptions. Explain gaps; similarity does not establish safety. If sources do not "
-        "support an answer, explicitly say insufficient evidence."
+        "support an answer, return exactly INSUFFICIENT_EVIDENCE with no other text. "
+        "For supported answers, use literal separate citation markers such as [S1] [S2]."
     )
     payload = {"model": model, "messages": [
         {"role": "system", "content": instruction},
         {"role": "user", "content": json.dumps(
             {"question": question, "sources": sources, "test_context": context})}]}
+    for attempt in range(2):
+        text = _generate(payload, api_key)
+        if text.strip() == "INSUFFICIENT_EVIDENCE":
+            return "The retrieved PDF passages do not contain enough evidence to answer this question."
+        # Accept common grouped citations, but validate every referenced ID.
+        text = re.sub(r"\[S\d+(?:\s*[,;]\s*S\d+)+\]",
+                      lambda match: " ".join(f"[S{n}]" for n in re.findall(r"S(\d+)", match.group())), text)
+        citations = set(re.findall(r"\[S(\d+)\]", text))
+        if citations and all(1 <= int(c) <= len(passages) for c in citations):
+            return text
+        if attempt == 0:
+            payload["messages"].extend([
+                {"role": "assistant", "content": text},
+                {"role": "user", "content": "Your answer failed citation validation. Rewrite using only "
+                 + ", ".join(f"[S{i}]" for i in range(1, len(passages) + 1))
+                 + ". Cite each supported factual claim. If the evidence cannot answer the question, "
+                 "return exactly INSUFFICIENT_EVIDENCE. Do not invent or append unrelated citations."}])
+    raise RuntimeError("Groq could not produce an answer with valid source citations after one retry. "
+                       "Review the retrieved passages or ask a narrower question.")
+
+
+def _generate(payload, api_key):
+    """Request one completion; callers validate grounding references."""
     request = Request(
         "https://api.groq.com/openai/v1/chat/completions",
         data=json.dumps(payload).encode(),
@@ -67,7 +91,4 @@ def answer(question, passages, context, api_key, model):
     text = choices[0].get("message", {}).get("content") if choices else None
     if not text:
         raise RuntimeError("Groq returned no answer; the request may have been blocked.")
-    citations = set(re.findall(r"\[S(\d+)\]", text))
-    if not citations or any(int(c) < 1 or int(c) > len(passages) for c in citations):
-        raise RuntimeError("The generated answer lacked valid source citations. Review the retrieved passages instead.")
     return text

@@ -27,8 +27,8 @@ class RetrievalTests(unittest.TestCase):
         embedding = TestEmbedding()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
-            chunks = [{"text": "Smoke detectors", "page": 7, "title": "SAME", "experiment": "SAME"},
-                      {"text": "Droplets burn", "page": 2, "title": "FLEX", "experiment": "FLEX"}]
+            chunks = [{"text": "Smoke detectors " * 15, "page": 7, "title": "SAME", "experiment": "SAME"},
+                      {"text": "Droplets burn " * 15, "page": 2, "title": "FLEX", "experiment": "FLEX"}]
             build_index(chunks, path, embedding)
             matches = search("smoke", path=path, embedding_function=embedding, max_distance=0.5)
             self.assertEqual([m["page"] for m in matches], [7])
@@ -44,6 +44,24 @@ class RetrievalTests(unittest.TestCase):
         with patch("rag.urlopen") as network:
             self.assertIn("Insufficient", answer("question", [], {}, "", ""))
             network.assert_not_called()
+
+    def test_retrieval_skips_title_slides_and_contents(self):
+        from vector_store import search
+        collection = MagicMock()
+        collection.count.return_value = 3
+        metadata = [{"title": "Report", "document_id": "doc", "page": p} for p in (1, 2, 3)]
+        documents = ["Science overview", "Contents ............ variables " * 15,
+                     "Investigated variables include oxygen concentration and ventilation velocity. " * 5]
+        collection.query.return_value = {"ids": [["0", "1", "2"]], "distances": [[0.1, 0.2, 0.3]]}
+        collection.get.return_value = {"ids": ["0", "1", "2"], "documents": documents, "metadatas": metadata}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("vector_store.client_and_embedding", return_value=(client, None)):
+                matches = search("What variables were investigated?", path=path)
+        self.assertEqual([p["page"] for p in matches], [3])
 
     def test_unknown_citation_is_rejected(self):
         response = MagicMock()
@@ -66,6 +84,18 @@ class RetrievalTests(unittest.TestCase):
             payload = json.loads(request.data)
             self.assertEqual(payload["model"], "provider/model")
             self.assertEqual(payload["messages"][0]["role"], "system")
+
+    def test_invalid_answer_is_retried_with_allowed_sources(self):
+        with patch("rag._generate", side_effect=["Uncited answer", "Supported [S1]"]) as generate:
+            self.assertEqual(answer("q", [{"text": "evidence"}], {}, "key", "model"), "Supported [S1]")
+            self.assertEqual(generate.call_count, 2)
+
+    def test_grouped_citations_and_insufficient_evidence(self):
+        with patch("rag._generate", return_value="Supported [S1, S2]"):
+            self.assertEqual(answer("q", [{}, {}], {}, "key", "model"), "Supported [S1] [S2]")
+        with patch("rag._generate", return_value="INSUFFICIENT_EVIDENCE") as generate:
+            self.assertIn("not contain enough evidence", answer("q", [{}], {}, "key", "model"))
+            self.assertEqual(generate.call_count, 1)
 
     def test_provider_error_does_not_expose_credentials(self):
         from urllib.error import HTTPError

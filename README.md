@@ -4,6 +4,8 @@
 
 PDF passages are stored in persistent local ChromaDB with local ONNX MiniLM
 embeddings and optional Groq answer generation. Retrieval needs no API key.
+Search combines semantic and keyword rankings, skips title slides and tables of
+contents, and includes neighbouring chunks on the same page for context.
 The first embedding run downloads model weights (internet access required).
 MiniLM is primarily English-oriented; evaluate Spanish questions against your
 English NASA PDFs before relying on cross-language retrieval.
