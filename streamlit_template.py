@@ -476,7 +476,7 @@ def article():
                 st.markdown(desc, unsafe_allow_html=True)
                 for experiment in experiments:
                     if len(experiments) > 1:
-                        st.markdown(f"**{term(experiment)}**")
+                        st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
                     render_references(experiment)
                 placeholder("TODO: summary card, key findings with page citations, small chart")
 
@@ -505,7 +505,7 @@ def article():
                     "landing page, where the experimental tables and files are published.")
         for experiment in ["BASS", "BASS-II", "FLEX", "SAME", "SAME-R"]:
             if references_for(experiment):
-                st.markdown(f"**{term(experiment)}**")
+                st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
                 render_references(experiment, show_citation=True)
         st.caption("Reference metadata is maintained in `references.csv` and linked to experiments in "
                    "`experiment_references.csv`. Row-level provenance remains visible in the test details.")
