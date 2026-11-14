@@ -1,0 +1,18 @@
+<svg width="190" height="190" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-label="Spherical flame">
+  <defs>
+    <radialGradient id="shell" cx="50%" cy="50%" r="50%">
+      <stop offset="45%" stop-color="#ffe7c2" stop-opacity="0"/>
+      <stop offset="70%" stop-color="#f6a04d" stop-opacity=".85"/>
+      <stop offset="88%" stop-color="#e2611f" stop-opacity=".95"/>
+      <stop offset="100%" stop-color="#b23a12" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="55%" stop-color="#9cc3ff"/>
+      <stop offset="100%" stop-color="#3366cc" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <circle cx="100" cy="100" r="92" fill="url(#shell)"/>
+  <circle cx="100" cy="100" r="58" fill="url(#core)"/>
+  <circle cx="100" cy="100" r="9" fill="#2a2a2a"/>
+</svg>
