@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -223,14 +222,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Downloaded RAG documents and generated local index
+# RAG: keep documents/manifest.csv tracked; ignore downloaded/generated files
 documents/pdfs/
 documents/index.json
 documents/index.json.tmp
 documents/chroma/
-=======
-__pycache__/
-*.pyc
-.venv/
-.streamlit/secrets.toml
->>>>>>> a638afb (feat: add scenario ranking, gap banners, conditions map and data explorer)
+documents/manifest.csv.tmp
