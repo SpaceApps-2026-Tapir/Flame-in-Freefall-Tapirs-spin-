@@ -82,3 +82,27 @@ If you see `No module named 'evidence'`, check step 3. If the error mentions
 | `uv run python -c "print('Hello from uv')"` | Run Python in the project's environment. |
 
 With `uv run`, you do not need to activate the environment manually. Track `pyproject.toml` and `uv.lock` in Git, and add `.venv/` to `.gitignore`. See the [official project guide](https://docs.astral.sh/uv/guides/projects/) for more details.
+
+## Run with Docker
+
+The image uses Astral's official `uv` image with Python 3.14 and installs exactly
+what `uv.lock` pins. `evidence.py` and `master_tests.csv` must be in the repository
+root before building (see step 3), because they are copied into the image.
+
+```bash
+docker compose up --build      # build and start → http://localhost:8501
+docker compose up -d           # start in the background
+docker compose logs -f         # follow logs
+docker compose down            # stop
+```
+
+Without Compose:
+
+```bash
+docker build -t flame-in-freefall .
+docker run --rm -p 8501:8501 flame-in-freefall
+```
+
+API keys (e.g. for the AI assistant) go in a `.env` file next to `compose.yaml`;
+it is git-ignored and loaded automatically. After changing dependencies with
+`uv add`, rebuild with `docker compose up --build`.

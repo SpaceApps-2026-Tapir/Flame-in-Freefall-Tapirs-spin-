@@ -5,6 +5,8 @@ description = "Flame in Freefall: a Streamlit fire safety evidence atlas"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "numpy>=2.5.4",
+    "pandas>=3.1.1",
     "plotly>=5.24",
     "streamlit>=1.67.0",
 ]
