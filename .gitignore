@@ -222,6 +222,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Downloaded RAG documents and generated local index
+documents/pdfs/
+documents/index.json
+documents/index.json.tmp
+documents/chroma/
 =======
 __pycache__/
 *.pyc

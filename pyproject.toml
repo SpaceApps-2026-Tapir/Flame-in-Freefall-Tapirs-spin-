@@ -6,6 +6,12 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "plotly>=5.24",
+    "chromadb>=1.5.9",
+    "gdown>=6.5.1",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "plotly>=5.24",
+    "pypdf>=6",
     "streamlit>=1.67.0",
 ]
 

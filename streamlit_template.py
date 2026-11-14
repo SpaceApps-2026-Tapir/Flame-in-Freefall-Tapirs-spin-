@@ -1,5 +1,6 @@
 from html import escape
 from pathlib import Path
+import os
 from urllib.parse import quote
 
 import pandas as pd
@@ -9,6 +10,7 @@ import streamlit as st
 
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
+from rag import answer, retrieve
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -452,7 +454,31 @@ def article():
                     "If there is no evidence, the assistant says so.</div>", unsafe_allow_html=True)
         question = st.text_input("Ask a question about fire safety evidence", value=qp.get("q", ""),
                                  placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
-        placeholder("TODO [RAG 2]: answer(question, rank(...), gap(...)) → text with citations")
+        if st.button("Find evidence and answer", disabled=not question.strip()):
+            try:
+                passages = retrieve(question)
+                if not passages:
+                    st.info("No indexed PDF passages. Add documents to documents/manifest.csv and run the ingestion script.")
+                else:
+                    for i, passage in enumerate(passages, 1):
+                        with st.expander(f"[S{i}] {passage['title']} — PDF page {passage['page']}"):
+                            st.write(passage["text"])
+                            source = passage.get("source_page_url") or passage["pdf_url"]
+                            st.link_button("Open source PDF", source.split("#")[0] + f"#page={passage['page']}")
+                    api_key = os.environ.get("GROQ_API_KEY", "")
+                    model = os.environ.get("GROQ_MODEL", "")
+                    if not api_key or not model:
+                        st.info("Passage search is ready. Set GROQ_API_KEY and GROQ_MODEL to enable generated answers.")
+                    else:
+                        context = {"scenario": PRESETS[preset] if preset else None}
+                        if preset:
+                            context["ranked_tests"] = rank(df, preset, pillar=pil, n=5).to_json(orient="records")
+                            context["gaps"] = gap(df, preset).to_json(orient="records")
+                        with st.spinner("Reading the retrieved evidence…"):
+                            st.write(answer(question, passages, context, api_key, model))
+                        st.caption("AI-generated answer. Check the passages above; citation IDs do not guarantee factual accuracy.")
+            except (ValueError, RuntimeError, OSError) as exc:
+                st.error(str(exc))
 
         heading("earth")
         placeholder("TODO [Pitch]: NASA spinoffs: firefighter air tanks, smoke detector, protective clothing")
@@ -465,7 +491,7 @@ def article():
             f"{term('tolerances', 'tolerance')} shown above).\n"
             f"- **{term('Outcome', 'outcome')} categories** for BASS/BASS-II are our reading of crew notes; "
             "the original note is always shown.\n"
-            "- **Use of AI:** TODO list tools used (code assistance, Gemini for answers).", unsafe_allow_html=True)
+            "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
 
         heading("references")
         placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
