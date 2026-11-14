@@ -9,7 +9,7 @@ import streamlit as st
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
 
-st.set_page_config(page_title="Flame in Freefall", page_icon="🔥", layout="wide")
+st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
 SERIF = "'Linux Libertine', 'Georgia', 'Times New Roman', serif"
 BASE_CSS = f"""
@@ -19,18 +19,22 @@ BASE_CSS = f"""
   .placeholder {{border: 1px dashed #a2a9b1; background: #fbfbfb; color: #72777d; padding: 1.2rem; text-align: center;}}
   footer {{visibility: hidden;}}
   abbr.gl {{text-decoration: underline dotted #898781; text-underline-offset: 3px; cursor: help;}}
-  .alert {{border-radius: .5rem; padding: .7rem 1rem; margin: .45rem 0; line-height: 1.55;}}
-  .alert.ok {{background: #e8f5e9; color: #14532d;}}
-  .alert.warn {{background: #fff7e0; color: #5c4400;}}
-  .alert.bad {{background: #fdecec; color: #7f1d1d;}}
-  .alert.info {{background: #eaf2fd; color: #1c3f6e;}}
+  .alert {{border-radius: .35rem; border-left: 5px solid; padding: .7rem 1rem; margin: .45rem 0; line-height: 1.55;}}
+  .alert.ok {{background: #e8f5e9; color: #14532d; border-color: #0ca30c;}}
+  .alert.warn {{background: #fff7e0; color: #5c4400; border-color: #e0a100;}}
+  .alert.bad {{background: #fdecec; color: #7f1d1d; border-color: #d03b3b;}}
+  .alert.info {{background: #eaf2fd; color: #1c3f6e; border-color: #3366cc;}}
+  .tag {{display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+         padding: .05rem .45rem; margin-right: .5rem; border-radius: .25rem; background: rgba(0,0,0,.08);}}
 </style>"""
 st.markdown(BASE_CSS, unsafe_allow_html=True)
 
 
-def alert(kind, html):
-    """Coloured box like st.success/warning/error, but HTML is allowed so glossary terms can show on hover."""
-    st.markdown(f"<div class='alert {kind}'>{html}</div>", unsafe_allow_html=True)
+def alert(kind, html, label=None):
+    """Coloured box like st.success/warning/error, but HTML is allowed so glossary terms can show on hover.
+    Status is carried by the colour bar AND a text label, never by colour or a symbol alone."""
+    tag = f"<span class='tag'>{label}</span>" if label else ""
+    st.markdown(f"<div class='alert {kind}'>{tag}{html}</div>", unsafe_allow_html=True)
 
 # Original emblem: a spherical microgravity flame (blue core, soot-orange shell)
 EMBLEM = """
@@ -127,7 +131,7 @@ def home():
             s1, s2 = st.columns([3, 0.55], vertical_alignment="bottom")
             q = s1.text_input("Question", placeholder="Ask the evidence, e.g. Do flames go out on their own at 30% oxygen?",
                               label_visibility="collapsed")
-            go = s2.form_submit_button("🔍")
+            go = s2.form_submit_button("Search")
         if go:
             st.query_params.update({"page": "article", "q": q})
             st.rerun()
@@ -165,9 +169,9 @@ INK, INK_2, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7", "#
 def evidence_table(ranked, p):
     """Closest NASA tests to the scenario, straight from rank()."""
     if p["gravity"] not in set(df["gravity"]):
-        alert("warn", f"⚠️ No test in this atlas was run at <b>{term(p['gravity'] + ' gravity', p['gravity'])}</b> "
+        alert("warn", f"No test in this atlas was run at <b>{term(p['gravity'] + ' gravity', p['gravity'])}</b> "
                       f"(all {len(df)} are in {term('microgravity')}). "
-                      "Tests below are ranked on oxygen and pressure only.")
+                      "Tests below are ranked on oxygen and pressure only.", label="Gravity mismatch")
     if ranked.empty:
         alert("info", "No tests with oxygen and pressure values for this pillar.")
         return
@@ -220,8 +224,8 @@ def test_details(r):
         st.markdown(f"**Original NASA note:** {val(r.outcome_raw)}")
         st.markdown(f"**Test conditions as logged:** {val(r.condition_detail)}")
         if not pd.isna(r.assumed_fields):
-            alert("info", f"ℹ️ {term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
-                          "(not logged per test).")
+            alert("info", f"{term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
+                          "(not logged per test).", label="Note")
         st.caption(f"Source: {r.source_file} · {r.source_location}")
 
 
@@ -232,9 +236,9 @@ def gap_banners(gaps, o2_tol, kpa_tol):
 
     gaps = gaps.assign(verdict=[verdict(r) for r in gaps.itertuples()])
     m1, m2, m3 = st.columns(3)
-    m1.metric("✅ Covered", int((gaps.verdict == "covered").sum()), help=tip("covered"))
-    m2.metric("⚠️ Covered except gravity", int((gaps.verdict == "gravity").sum()), help=tip("covered except gravity"))
-    m3.metric("❌ Gap", int((gaps.verdict == "gap").sum()), help=tip("gap"))
+    m1.metric("Covered", int((gaps.verdict == "covered").sum()), help=tip("covered"))
+    m2.metric("Gravity gap", int((gaps.verdict == "gravity").sum()), help=tip("covered except gravity"))
+    m3.metric("Gap", int((gaps.verdict == "gap").sum()), help=tip("gap"))
     st.markdown(f"<div class='hatnote'>A {term('pillar')} × {term('fuel type')} is covered when at least one test "
                 f"is within ±{o2_tol:g} {term('percentage points', 'pp')} of {term('O₂', 'o2')} <b>and</b> "
                 f"±{kpa_tol:g} {term('kPa', 'kpa')} of the scenario.</div>", unsafe_allow_html=True)
@@ -252,12 +256,12 @@ def gap_banners(gaps, o2_tol, kpa_tol):
                 over_kpa = max(0.0, abs(r.closest_d_kpa) - kpa_tol)
                 outside = " and ".join(t for t in [f"{over_o2:.1f} {pp} O₂" if over_o2 else "",
                                                    f"{over_kpa:.1f} kPa" if over_kpa else ""] if t)
-                alert("bad", f"❌ <b>{term('Gap', 'gap')}</b> · {msg} It lies outside the {tol} box by {outside}.")
+                alert("bad", f"{msg} It lies outside the {tol} box by {outside}.", label=term("Gap", "gap"))
             elif r.verdict == "gravity":
-                alert("warn", f"⚠️ <b>{term('Covered except gravity', 'covered except gravity')}</b> · {msg} "
-                              "Oxygen and pressure match, gravity does not.")
+                alert("warn", f"{msg} Oxygen and pressure match, gravity does not.",
+                      label=term("Gravity gap", "covered except gravity"))
             else:
-                alert("ok", f"✅ <b>{term('Covered', 'covered')}</b> · {msg}")
+                alert("ok", msg, label=term("Covered", "covered"))
 
 
 def conditions_map(pts, preset, p, o2_tol, kpa_tol):
@@ -278,7 +282,7 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
                       y0=p["kpa"] - kpa_tol, y1=p["kpa"] + kpa_tol,
                       line=dict(color=INK_2, width=1.5, dash="dash"), fillcolor="rgba(11,11,11,0.04)", layer="below")
         fig.add_trace(go.Scatter(
-            x=[p["o2"]], y=[p["kpa"]], mode="markers+text", name=f"★ {preset}",
+            x=[p["o2"]], y=[p["kpa"]], mode="markers+text", name=f"Scenario: {preset}",
             marker=dict(symbol="star", size=20, color=INK, line=dict(width=2, color=SURFACE)),
             text=[preset], textposition="top center", textfont=dict(color=INK, size=13),
             hovertemplate=f"<b>{preset}</b><br>{p['o2']:g}% O₂, {p['kpa']:g} kPa<br>{p['source']}<extra></extra>",
@@ -323,7 +327,7 @@ def article():
 
     with st.sidebar:
         st.markdown("<a href='?' target='_self' style='text-decoration:none;font-family:Georgia,serif;font-size:1.3rem;color:#202122'>"
-                    "🔥 Flame in Freefall</a>", unsafe_allow_html=True)
+                    "Flame in Freefall</a>", unsafe_allow_html=True)
         st.markdown("### Contents")
         st.markdown("<div class='toc'>" + "".join(
             f"{i}&nbsp; <a href='#{a}'>{t}</a><br>" for i, (a, t) in enumerate(SECTIONS, 1)) + "</div>",
@@ -382,9 +386,9 @@ def article():
         o2_tol = kpa_tol = None
 
         if p is None:
-            st.info("**Choose a mission scenario in the sidebar** (ISS cabin, Moon base, exploration atmosphere, "
-                    "spacesuit or Mars habitat). The atlas will then rank NASA tests against its oxygen, pressure "
-                    "and gravity, and show where the evidence stops.", icon="👈")
+            alert("info", "<b>Choose a mission scenario in the sidebar</b> (ISS cabin, Moon base, exploration "
+                          "atmosphere, spacesuit or Mars habitat). The atlas will then rank NASA tests against its "
+                          "oxygen, pressure and gravity, and show where the evidence stops.", label="Start here")
         else:
             st.markdown("<div class='hatnote'>All numbers below are computed from NASA tables, not by AI.</div>",
                         unsafe_allow_html=True)
@@ -551,7 +555,7 @@ def explore():
     res = df[mask]
     st.markdown(f"#### Results: {len(res)} of {len(df)} tests match")
     if res.empty:
-        st.error("No NASA test matches this combination of filters: this is an evidence gap.", icon="❌")
+        alert("bad", "No NASA test matches this combination of filters: this is an evidence gap.", label="No matches")
         return
     st.dataframe(res, hide_index=True, width="stretch", column_config={
         c: st.column_config.Column(LABELS[c], help=tip(COLUMN_HELP.get(c, c))) for c in res.columns})
