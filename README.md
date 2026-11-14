@@ -48,12 +48,15 @@ English NASA PDFs before relying on cross-language retrieval.
    ```
 
    Choose a model available to your account; use its exact model ID from the Groq console.
-   The app reads environment variables directly; it does not load `.env` files.
+   Instead of `export`, you can put the same two lines (`GROQ_API_KEY = "..."`, `GROQ_MODEL = "..."`)
+   in `.streamlit/secrets.toml` (gitignored), or in the app's Secrets settings on Streamlit Cloud.
+   The app does not load `.env` files.
    Never commit API keys. Generated answers send the question, retrieved
    passages, and selected scenario/test context to Groq and may incur API charges.
 
-5. Search from the home page, then select **Find evidence and answer** in
-   **Ask the evidence**. Review the excerpts and **Open source PDF** links.
+5. Search from the home page: the answer appears at the top of the next page, under
+   **Ask the evidence**, with its sources. Ask follow-ups in the same box. Review the
+   excerpts and **Open source PDF** links.
    Drive opens its document viewer; use the displayed PDF page number if the
    viewer does not honor the page anchor.
    Without credentials, the app shows passages only. With a mission scenario,
