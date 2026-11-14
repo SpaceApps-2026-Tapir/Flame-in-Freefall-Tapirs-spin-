@@ -1,4 +1,5 @@
 from html import escape
+from pathlib import Path
 from urllib.parse import quote
 
 import pandas as pd
@@ -15,18 +16,37 @@ st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fi
 SERIF = "'Linux Libertine', 'Georgia', 'Times New Roman', serif"
 BASE_CSS = f"""
 <style>
-  h1, h2, .stMarkdown h1, .stMarkdown h2 {{font-family: {SERIF} !important; font-weight: 400 !important;}}
-  a {{color: #3366cc;}}
-  .placeholder {{border: 1px dashed #a2a9b1; background: #fbfbfb; color: #72777d; padding: 1.2rem; text-align: center;}}
+  /* light-dark() follows Streamlit's color-scheme, including changes from the app menu. */
+  [data-testid="stApp"] {{
+    --atlas-text: light-dark(#202122, #f1f5f9);
+    --atlas-muted: light-dark(#54595d, #c5cbd4);
+    --atlas-note: light-dark(#60666d, #bbc4d1);
+    --atlas-link: light-dark(#3366cc, #9cc3ff);
+    --atlas-border: light-dark(#a2a9b1, #5c687a);
+    --atlas-divider: light-dark(#c8ccd1, #465268);
+    --atlas-panel: light-dark(#f8f9fa, #202735);
+    --atlas-placeholder: light-dark(#fbfbfb, #1d2532);
+  }}
+  h1, h2, .stMarkdown h1, .stMarkdown h2 {{font-family: {SERIF} !important; font-weight: 400 !important; color: var(--atlas-text);}}
+  a {{color: var(--atlas-link);}}
+  .brand-link {{text-decoration: none; font-family: Georgia, serif; font-size: 1.3rem; color: var(--atlas-text);}}
+  .home-link {{display: inline-block; margin-left: .6rem; padding: .15rem .5rem; border: 1px solid var(--atlas-border);
+               border-radius: .35rem; background: var(--atlas-panel); font-size: .75rem; text-decoration: none !important;}}
+  .home-link:hover {{background: var(--atlas-placeholder); text-decoration: underline !important;}}
+  .home-link:focus-visible {{outline: 2px solid var(--atlas-link); outline-offset: 3px;}}
+  .placeholder {{border: 1px dashed var(--atlas-border); background: var(--atlas-placeholder); color: var(--atlas-note); padding: 1.2rem; text-align: center;}}
   footer {{visibility: hidden;}}
-  abbr.gl {{text-decoration: underline dotted #898781; text-underline-offset: 3px; cursor: help;}}
+  abbr.gl {{text-decoration: underline dotted; text-underline-offset: 3px; cursor: help;}}
   .alert {{border-radius: .35rem; border-left: 5px solid; padding: .7rem 1rem; margin: .45rem 0; line-height: 1.55;}}
-  .alert.ok {{background: #e8f5e9; color: #14532d; border-color: #0ca30c;}}
-  .alert.warn {{background: #fff7e0; color: #5c4400; border-color: #e0a100;}}
-  .alert.bad {{background: #fdecec; color: #7f1d1d; border-color: #d03b3b;}}
-  .alert.info {{background: #eaf2fd; color: #1c3f6e; border-color: #3366cc;}}
+  .alert.ok {{background: light-dark(#e8f5e9, #123124); color: light-dark(#14532d, #c0f5d5); border-color: light-dark(#0ca30c, #4ade80);}}
+  .alert.warn {{background: light-dark(#fff7e0, #342b16); color: light-dark(#5c4400, #ffe6a3); border-color: light-dark(#e0a100, #e7b74a);}}
+  .alert.bad {{background: light-dark(#fdecec, #381c24); color: light-dark(#7f1d1d, #ffc7ce); border-color: light-dark(#d03b3b, #ff8091);}}
+  .alert.info {{background: light-dark(#eaf2fd, #172a43); color: light-dark(#1c3f6e, #c7ddff); border-color: light-dark(#3366cc, #83b4ff);}}
   .tag {{display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-         padding: .05rem .45rem; margin-right: .5rem; border-radius: .25rem; background: rgba(0,0,0,.08);}}
+         padding: .05rem .45rem; margin-right: .5rem; border-radius: .25rem; background: light-dark(rgba(0,0,0,.08), rgba(255,255,255,.08));}}
+  .st-key-conditions_map :is(.xtick text, .ytick text, .xtitle, .ytitle, .legendtext, .textpoint text) {{
+    fill: var(--atlas-text) !important;
+  }}
 </style>"""
 st.markdown(BASE_CSS, unsafe_allow_html=True)
 
@@ -37,26 +57,9 @@ def alert(kind, html, label=None):
     tag = f"<span class='tag'>{label}</span>" if label else ""
     st.markdown(f"<div class='alert {kind}'>{tag}{html}</div>", unsafe_allow_html=True)
 
-# Original emblem: a spherical microgravity flame (blue core, soot-orange shell)
-EMBLEM = """
-<svg width="190" height="190" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-label="Spherical flame">
-  <defs>
-    <radialGradient id="shell" cx="50%" cy="50%" r="50%">
-      <stop offset="45%" stop-color="#ffe7c2" stop-opacity="0"/>
-      <stop offset="70%" stop-color="#f6a04d" stop-opacity=".85"/>
-      <stop offset="88%" stop-color="#e2611f" stop-opacity=".95"/>
-      <stop offset="100%" stop-color="#b23a12" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="core" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#ffffff"/>
-      <stop offset="55%" stop-color="#9cc3ff"/>
-      <stop offset="100%" stop-color="#3366cc" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <circle cx="100" cy="100" r="92" fill="url(#shell)"/>
-  <circle cx="100" cy="100" r="58" fill="url(#core)"/>
-  <circle cx="100" cy="100" r="9" fill="#2a2a2a"/>
-</svg>"""
+# Transparent vector emblem, kept in its own file for editing.
+# Keep it in one Markdown HTML block so blank lines do not split the SVG.
+EMBLEM = (Path(__file__).parent / "assets" / "logo.svg").read_text(encoding="utf-8").replace("\n", " ")
 
 
 @st.cache_data
@@ -81,49 +84,50 @@ def home():
 <style>
   [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
   .block-container {max-width: 960px; padding-top: 3rem;}
-  .title {text-align:center; font-family: """ + SERIF + """; font-size: 2.9rem; margin: .2rem 0 0; color:#202122;}
-  .subtitle {text-align:center; font-family: """ + SERIF + """; font-size: 1.05rem; color:#54595d; margin-bottom: 1.4rem;}
+  .title {text-align:center; font-family: """ + SERIF + """; font-size: 2.9rem; margin: .2rem 0 0; color:var(--atlas-text);}
+  .subtitle {text-align:center; font-family: """ + SERIF + """; font-size: 1.05rem; color:var(--atlas-muted); margin-bottom: 1.4rem;}
   .portal, .portal * {text-decoration:none !important;}
+  .portal-grid {display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:.9rem; margin:1.5rem 0 1rem;}
+  .portal:hover {border-color:var(--atlas-link); background:var(--atlas-placeholder);}
   .portal:hover b {text-decoration: underline !important;}
-  .portal {display:block; color:#3366cc !important; line-height:1.25; margin: .55rem 0;}
-  .portal b {font-size: 1.15rem; font-weight: 700;}
-  .portal span {color:#54595d; font-size: .85rem;}
-  .left {text-align:right;} .right {text-align:left;}
-  .emblem {display:flex; justify-content:center;}
+  .portal {display:flex; flex-direction:column; justify-content:center; gap:.45rem; color:var(--atlas-link) !important;
+           line-height:1.3; padding:1rem; min-height:6.5rem; border:1px solid var(--atlas-border);
+           border-radius:.4rem; background:var(--atlas-panel); overflow-wrap:anywhere;}
+  .portal br {display:none;}
+  .portal b {font-size: 1.05rem; font-weight: 700;}
+  .portal span {color:var(--atlas-muted); font-size: .85rem;}
+  .portal:focus-visible {outline:2px solid var(--atlas-link); outline-offset:4px; border-radius:.25rem;}
+  .emblem {display:flex; justify-content:center; margin-bottom:1rem;}
+  @media (max-width:800px) {.portal-grid {grid-template-columns:repeat(2, minmax(0, 1fr));}}
+  @media (max-width:480px) {.portal-grid {grid-template-columns:1fr;}}
   div[data-testid="stForm"] {border: none; padding: 0;}
   [data-testid="stFormSubmitButton"] button {background:#3366cc; color:white; border:none; border-radius:2px; width:100%;}
-  [data-testid="stFormSubmitButton"] button:hover {background:#447ff5; color:white;}
-  .divider {border-top: 1px solid #c8ccd1; margin: 1.6rem auto 1rem; width: 75%;}
+  [data-testid="stFormSubmitButton"] button:hover {background:#2b57ae; color:white;}
+  .divider {border-top: 1px solid var(--atlas-divider); margin: 1.6rem auto 1rem; width: 75%;}
   .langs {text-align:center; font-size: .92rem; line-height: 2;}
   .langs a {margin: 0 .6rem; text-decoration:none;}
-  .note {text-align:center; color:#72777d; font-size:.78rem; margin-top: 1.5rem;}
+  .note {text-align:center; color:var(--atlas-note); font-size:.78rem; margin-top: 1.5rem;}
 </style>""", unsafe_allow_html=True)
 
     st.markdown("<div class='title'>Flame in Freefall</div>"
                 "<div class='subtitle'>The Fire Safety Evidence Atlas</div>", unsafe_allow_html=True)
 
-    # emblem with portal links around it: pillars on the left, every mission scenario on the right
-    left, mid, right = st.columns([1.2, 1, 1.2], vertical_alignment="center")
-    with left:
-        st.markdown("<div class='left'>"
-                    + link("Prevention", f"BASS · BASS-II · {n.get('BASS', 0) + n.get('BASS-II', 0)} tests",
-                           hint=tip("prevention"), page="article", pillar="prevention")
-                    + link("Detection", f"SAME · SAME-R · {n.get('SAME', 0) + n.get('SAME-R', 0)} tests",
-                           hint=tip("detection"), page="article", pillar="detection")
-                    + link("Suppression", f"FLEX · {n.get('FLEX', 0)} tests",
-                           hint=tip("suppression"), page="article", pillar="suppression")
-                    + "</div>", unsafe_allow_html=True)
-    with mid:
-        st.markdown(f"<div class='emblem'>{EMBLEM}</div>", unsafe_allow_html=True)
-    with right:
-        st.markdown("<div class='right'>"
-                    + "".join(link(name.replace(" (challenge brief)", ""),
-                                   f"{s['o2']:g}% O₂ · {s['kpa'] / 6.895:.1f} psi",
-                                   hint=f"{s['o2']:g}% oxygen at {s['kpa']:g} kPa ({s['kpa'] / 6.895:.1f} psi), "
-                                        f"{s['gravity']} gravity. Source: {s['source']}",
-                                   page="article", scenario=name)
-                              for name, s in PRESETS.items())
-                    + "</div>", unsafe_allow_html=True)
+    scenario_links = [link(name.replace(" (challenge brief)", ""),
+                           f"{s['o2']:g}% O₂ · {s['kpa'] / 6.895:.1f} psi",
+                           hint=f"{s['o2']:g}% oxygen at {s['kpa']:g} kPa ({s['kpa'] / 6.895:.1f} psi), "
+                                f"{s['gravity']} gravity. Source: {s['source']}",
+                           page="article", scenario=name)
+                      for name, s in PRESETS.items()]
+
+    pillar_links = [
+        link("Prevention", f"BASS · BASS-II · {n.get('BASS', 0) + n.get('BASS-II', 0)} tests",
+             hint=tip("prevention"), page="article", pillar="prevention"),
+        link("Detection", f"SAME · SAME-R · {n.get('SAME', 0) + n.get('SAME-R', 0)} tests",
+             hint=tip("detection"), page="article", pillar="detection"),
+        link("Suppression", f"FLEX · {n.get('FLEX', 0)} tests",
+             hint=tip("suppression"), page="article", pillar="suppression"),
+    ]
+    st.markdown(f"<div class='emblem'>{EMBLEM}</div>", unsafe_allow_html=True)
 
     # search bar: one question box + blue button (the scenario is chosen in the article's sidebar)
     _, c, _ = st.columns([0.6, 3, 0.6])
@@ -138,6 +142,9 @@ def home():
             st.rerun()
         st.markdown("<div class='langs'><a href='?page=explore' target='_self'>Or filter all "
                     f"{len(df)} tests in the data explorer →</a></div>", unsafe_allow_html=True)
+
+    st.markdown("<nav class='portal-grid' aria-label='Fire safety topics and mission scenarios'>"
+                + "".join(pillar_links + scenario_links) + "</nav>", unsafe_allow_html=True)
 
     st.markdown(f"<div class='note'>{len(df)} microgravity fire tests from NASA Physical Sciences Informatics · "
                 "Built for NASA Space Apps Challenge 2026 · Not affiliated with or endorsed by NASA</div>",
@@ -190,7 +197,6 @@ def render_references(experiment, show_citation=False):
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
 PILLAR_COLORS = {"prevention": "#2a78d6", "detection": "#eb6834", "suppression": "#1baf7a"}
 EXPERIMENT_SYMBOLS = {"BASS": "circle", "BASS-II": "diamond", "SAME": "circle", "SAME-R": "diamond", "FLEX": "circle"}
-INK, INK_2, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#e1e0d9", "#c3c2b7", "#fcfcfb"
 
 
 def evidence_table(ranked, p):
@@ -311,22 +317,22 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
         labels={"oxygen_pct": "Oxygen (%)", "pressure_kpa": "Pressure (kPa)", "outcome_category": "outcome",
                 "airflow_cms": "airflow (cm/s)", "pillar": "Pillar", "experiment": "Experiment"},
     )
-    fig.update_traces(marker=dict(size=9, opacity=0.7, line=dict(width=1.5, color=SURFACE)))
+    fig.update_traces(marker=dict(size=9, opacity=0.7, line=dict(width=1.5, color="rgba(128,128,128,0.45)")))
     if p is not None:  # no scenario chosen yet: just the tests, no star or tolerance box
         fig.add_shape(type="rect", x0=p["o2"] - o2_tol, x1=p["o2"] + o2_tol,
                       y0=p["kpa"] - kpa_tol, y1=p["kpa"] + kpa_tol,
-                      line=dict(color=INK_2, width=1.5, dash="dash"), fillcolor="rgba(11,11,11,0.04)", layer="below")
+                      line=dict(color="#8a9099", width=1.5, dash="dash"), fillcolor="rgba(128,128,128,0.08)", layer="below")
         fig.add_trace(go.Scatter(
             x=[p["o2"]], y=[p["kpa"]], mode="markers+text", name=f"Scenario: {preset}",
-            marker=dict(symbol="star", size=20, color=INK, line=dict(width=2, color=SURFACE)),
-            text=[preset], textposition="top center", textfont=dict(color=INK, size=13),
+            marker=dict(symbol="star", size=20, color="#ffffff", line=dict(width=2, color="#0b0b0b")),
+            text=[preset], textposition="top center", textfont=dict(size=13),
             hovertemplate=f"<b>{preset}</b><br>{p['o2']:g}% O₂, {p['kpa']:g} kPa<br>{p['source']}<extra></extra>",
         ))
-    axis = dict(gridcolor=GRID, linecolor=AXIS, zeroline=False, tickfont=dict(color=INK_2), title_font=dict(color=INK_2))
-    fig.update_layout(plot_bgcolor=SURFACE, paper_bgcolor=SURFACE, font=dict(color=INK_2), height=480,
+    axis = dict(zeroline=False)
+    fig.update_layout(height=480,
                       margin=dict(l=10, r=10, t=30, b=10), xaxis=axis, yaxis=axis,
                       legend=dict(title_text="", bgcolor="rgba(0,0,0,0)"))
-    st.plotly_chart(fig, theme=None, width="stretch")
+    st.plotly_chart(fig, theme="streamlit", key="conditions_map", width="stretch")
 
     stacked = pts.groupby(["oxygen_pct", "pressure_kpa"]).size()
     top = stacked.idxmax()
@@ -343,15 +349,15 @@ def article():
     st.markdown("""
 <style>
   .block-container {max-width: 1150px; padding-top: 2rem;}
-  h1 {font-size: 2.2rem !important; border-bottom: 1px solid #a2a9b1; padding-bottom: .2rem; margin-bottom: .2rem;}
-  h2 {font-size: 1.6rem !important; border-bottom: 1px solid #a2a9b1; padding-bottom: .15rem; margin-top: 1.6rem;}
-  .tagline {color: #54595d; font-size: .9rem; margin-bottom: 1rem;}
-  .infobox {border: 1px solid #a2a9b1; background: #f8f9fa; padding: .6rem .8rem; font-size: .88rem;}
+  h1 {font-size: 2.2rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .2rem; margin-bottom: .2rem;}
+  h2 {font-size: 1.6rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .15rem; margin-top: 1.6rem;}
+  .tagline {color: var(--atlas-muted); font-size: .9rem; margin-bottom: 1rem;}
+  .infobox {border: 1px solid var(--atlas-border); background: var(--atlas-panel); color: var(--atlas-text); padding: .6rem .8rem; font-size: .88rem;}
   .infobox .ib-title {font-weight: 700; text-align: center; font-size: 1rem; padding-bottom: .4rem; display: block;}
   .infobox table {width: 100%; border-collapse: collapse;}
-  .infobox th, .infobox td {border: none !important; border-top: 1px solid #eaecf0 !important; background: transparent !important; padding: .2rem .3rem;}
+  .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
   .infobox th {text-align: left; vertical-align: top; width: 45%;}
-  .hatnote {font-style: italic; color: #54595d; padding-left: 1.6em; margin-bottom: .6rem;}
+  .hatnote {font-style: italic; color: var(--atlas-muted); padding-left: 1.6em; margin-bottom: .6rem;}
   .toc a {text-decoration: none;}
 </style>""", unsafe_allow_html=True)
 
@@ -361,7 +367,7 @@ def article():
     default_p = pillars.index(qp["pillar"]) if qp.get("pillar") in pillars else 0
 
     with st.sidebar:
-        st.markdown("<a href='?' target='_self' style='text-decoration:none;font-family:Georgia,serif;font-size:1.3rem;color:#202122'>"
+        st.markdown("<a href='?' target='_self' class='brand-link'>"
                     "Flame in Freefall</a>", unsafe_allow_html=True)
         st.markdown("### Contents")
         st.markdown("<div class='toc'>" + "".join(
@@ -564,8 +570,8 @@ def explore():
 <style>
   [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
   .block-container {max-width: 1150px; padding-top: 2rem;}
-  h1 {font-size: 2.2rem !important; border-bottom: 1px solid #a2a9b1; padding-bottom: .2rem; margin-bottom: .2rem;}
-  .tagline {color: #54595d; font-size: .9rem; margin-bottom: 1rem;}
+  h1 {font-size: 2.2rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .2rem; margin-bottom: .2rem;}
+  .tagline {color: var(--atlas-muted); font-size: .9rem; margin-bottom: 1rem;}
 </style>""", unsafe_allow_html=True)
     st.markdown("<a href='?' target='_self' style='text-decoration:none'>← Flame in Freefall</a>", unsafe_allow_html=True)
     st.markdown("<h1>Data explorer</h1>", unsafe_allow_html=True)
