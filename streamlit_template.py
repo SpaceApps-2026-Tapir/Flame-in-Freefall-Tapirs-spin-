@@ -8,6 +8,7 @@ import streamlit as st
 
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
+from references import dataset_reference, references_for
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -160,6 +161,32 @@ def placeholder(text):
     st.markdown(f'<div class="placeholder">{text}</div>', unsafe_allow_html=True)
 
 
+def reference_line(ref, show_citation=False):
+    """One reference: title, year, identifier and a DOI or source link."""
+    title = escape(ref.get("title", "Untitled reference"))
+    year = f" ({ref['year']})" if ref.get("year") else ""
+    ident = f" `{escape(ref['identifier'])}`" if ref.get("identifier") else ""
+    if ref.get("doi"):
+        link = f"[DOI {ref['doi']}](https://doi.org/{ref['doi']})"
+    elif ref.get("url"):
+        link = f"[source]({ref['url']})"
+    else:
+        link = "no link recorded"
+    role = f" · {ref['role']}" if ref.get("role") else ""
+    st.markdown(f"- **{title}**{year}{ident} — {link}{role}")
+    if show_citation and ref.get("citation"):
+        st.caption(ref["citation"])
+
+
+def render_references(experiment, show_citation=False):
+    refs = references_for(experiment)
+    if not refs:
+        st.caption("No references recorded for this experiment.")
+        return
+    for ref in refs:
+        reference_line(ref, show_citation=show_citation)
+
+
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
 PILLAR_COLORS = {"prevention": "#2a78d6", "detection": "#eb6834", "suppression": "#1baf7a"}
 EXPERIMENT_SYMBOLS = {"BASS": "circle", "BASS-II": "diamond", "SAME": "circle", "SAME-R": "diamond", "FLEX": "circle"}
@@ -226,7 +253,15 @@ def test_details(r):
         if not pd.isna(r.assumed_fields):
             alert("info", f"{term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
                           "(not logged per test).", label="Note")
-        st.caption(f"Source: {r.source_file} · {r.source_location}")
+        source = f"Source: {escape(str(r.source_file))} · {escape(str(r.source_location))}"
+        ref = dataset_reference(r.experiment)
+        if ref:
+            label = escape(ref.get("identifier") or "PSI dataset")
+            if ref.get("doi"):
+                source += f" · Dataset [{label}](https://doi.org/{ref['doi']})"
+            elif ref.get("url"):
+                source += f" · Dataset [{label}]({ref['url']})"
+        st.caption(source)
 
 
 def gap_banners(gaps, o2_tol, kpa_tol):
@@ -424,21 +459,25 @@ def article():
         conditions_map(pts, preset, p, o2_tol, kpa_tol)
 
         heading("experiments")
-        for name, pillar_label, desc in [
+        for name, pillar_label, desc, experiments in [
             ("BASS / BASS-II", "Prevention",
              f"{term('BASS')} / {term('BASS-II')}: how solid materials ({term('PMMA', 'pmma')} plastic, fabric such as "
              f"{term('Nomex', 'nomex')}, wax) ignite, spread and go out in low-speed {term('airflow')}. "
-             f"Run in the {term('MSG', 'msg')}."),
+             f"Run in the {term('MSG', 'msg')}.", ["BASS", "BASS-II"]),
             ("FLEX", "Suppression",
              f"{term('FLEX')}: {term('fuel droplets', 'liquid fuel droplet')} burned in different {term('O₂', 'o2')}, "
              f"pressure and {term('suppressant')} (CO₂, helium) mixtures. Run in the {term('CIR', 'cir')} with the "
-             f"{term('MDCA', 'mdca')}."),
+             f"{term('MDCA', 'mdca')}.", ["FLEX"]),
             ("SAME / SAME-R", "Detection",
              f"{term('SAME')} / {term('SAME-R')}: smoke particle sizes from heated spacecraft materials and how "
-             f"smoke detectors respond. Includes a {term('reference aerosol')}."),
+             f"smoke detectors respond. Includes a {term('reference aerosol')}.", ["SAME", "SAME-R"]),
         ]:
             with st.expander(f"{name}: {pillar_label}"):
                 st.markdown(desc, unsafe_allow_html=True)
+                for experiment in experiments:
+                    if len(experiments) > 1:
+                        st.markdown(f"**{term(experiment)}**")
+                    render_references(experiment)
                 placeholder("TODO: summary card, key findings with page citations, small chart")
 
         heading("ask")
@@ -462,7 +501,14 @@ def article():
             "- **Use of AI:** TODO list tools used (code assistance, Gemini for answers).", unsafe_allow_html=True)
 
         heading("references")
-        placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
+        st.markdown("Datasets and reports used by this atlas. Dataset DOIs resolve to the canonical NASA PSI "
+                    "landing page, where the experimental tables and files are published.")
+        for experiment in ["BASS", "BASS-II", "FLEX", "SAME", "SAME-R"]:
+            if references_for(experiment):
+                st.markdown(f"**{term(experiment)}**")
+                render_references(experiment, show_citation=True)
+        st.caption("Reference metadata is maintained in `references.csv` and linked to experiments in "
+                   "`experiment_references.csv`. Row-level provenance remains visible in the test details.")
 
     st.markdown("<hr><div class='tagline'>Built for NASA Space Apps Challenge 2026, Flame in Freefall. "
                 "Data: NASA Physical Sciences Informatics. Not affiliated with or endorsed by NASA.</div>",

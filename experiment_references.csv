@@ -1,0 +1,7 @@
+experiment,ref_id,role
+BASS,ref-psi-26,primary
+BASS-II,ref-psi-25,primary
+BASS-II,ref-tm-20210011385,supporting
+FLEX,ref-psi-69,primary
+SAME,ref-psi-102,primary
+SAME-R,ref-psi-101,primary
