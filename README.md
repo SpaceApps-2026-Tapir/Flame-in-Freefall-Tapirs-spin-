@@ -1,5 +1,76 @@
 # Flame-in-Freefall-Tapirs-spin-
 
+## PDF questions and answers (RAG)
+
+PDF passages are stored in persistent local ChromaDB with local ONNX MiniLM
+embeddings and optional Groq answer generation. Retrieval needs no API key.
+Search combines semantic and keyword rankings, skips title slides and tables of
+contents, and includes neighbouring chunks on the same page for context.
+The first embedding run downloads model weights (internet access required).
+MiniLM is primarily English-oriented; evaluate Spanish questions against your
+English NASA PDFs before relying on cross-language retrieval.
+
+1. Run `uv sync --locked`.
+2. The manifest uses the PDFs from the team's shared
+   [Google Drive folder](https://drive.google.com/drive/folders/1YXhHQEK82FCtzmncAq9-JR7_xbUgDaXv).
+   Refresh its file list after adding or removing PDFs:
+
+   ```bash
+   uv run python scripts/sync_drive_manifest.py
+   ```
+
+   This replaces `documents/manifest.csv` with the current Drive PDF listing.
+   Public link access and downloads must be enabled; private folders are not
+   supported by this ingestion path. Experiment tags are inferred from filenames;
+   review them before indexing. You can edit titles/tags manually, but the next
+   sync regenerates them. Keep original NASA provenance in your source records.
+3. Download and index the documents:
+
+   ```bash
+   uv run python scripts/ingest_documents.py
+   ```
+
+   Downloads are cached in `documents/pdfs/`. The script rebuilds
+   `documents/chroma/`, preserving PDF page numbers with overlapping 100-word passages.
+   Re-run it after changing the manifest. Each run publishes a full snapshot,
+   so removed documents disappear from searches. Older snapshots remain on disk
+   for active readers; stop the app and remove `documents/chroma/` before
+   rebuilding if you need to reclaim space. The old JSON index is no longer used. To refresh a changed PDF at the same
+   URL, remove its cached file first. Scanned PDFs need OCR before ingestion.
+   PDF page numbers may differ from printed report page numbers.
+
+4. To enable answers, set these environment variables in your terminal:
+
+   ```bash
+   export GROQ_API_KEY='your-api-key'
+   export GROQ_MODEL='your-supported-groq-model-id'
+   uv run streamlit run streamlit_template.py
+   ```
+
+   Choose a model available to your account; use its exact model ID from the Groq console.
+   Instead of `export`, you can put the same two lines (`GROQ_API_KEY = "..."`, `GROQ_MODEL = "..."`)
+   in `.streamlit/secrets.toml` (gitignored), or in the app's Secrets settings on Streamlit Cloud.
+   The app does not load `.env` files.
+   Never commit API keys. Generated answers send the question, retrieved
+   passages, and selected scenario/test context to Groq and may incur API charges.
+
+5. Search from the home page: the answer appears at the top of the next page, under
+   **Ask the evidence**, with its sources. Ask follow-ups in the same box. Review the
+   excerpts and **Open source PDF** links.
+   Drive opens its document viewer; use the displayed PDF page number if the
+   viewer does not honor the page anchor.
+   Without credentials, the app shows passages only. With a mission scenario,
+   the model also receives ranked tests and computed evidence gaps.
+
+Commit the manifest and code; downloaded PDFs and generated indexes are ignored.
+Deployment must run ingestion before serving PDF searches. Vector distance is only a retrieval signal: nearest neighbours may be
+irrelevant even when there is no supporting evidence. No relevance threshold
+is enabled until calibrated on real questions. Citation IDs are checked, but factual support still needs
+human review. Try supported, unrelated, and unanswerable questions before use.
+
+Offline checks: `uv run python -m unittest discover -s tests`.
+Groq integration follows the [Chat Completions API](https://console.groq.com/docs/api-reference).
+
 ## Team members
 
 - Andres Blanco

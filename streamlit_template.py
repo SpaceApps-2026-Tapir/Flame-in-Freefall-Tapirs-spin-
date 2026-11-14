@@ -1,5 +1,7 @@
 from html import escape
+import json
 from pathlib import Path
+import os
 from urllib.parse import quote
 
 import pandas as pd
@@ -9,6 +11,7 @@ import streamlit as st
 
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
+from rag import answer, retrieve
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -152,9 +155,9 @@ def home():
 
 # ====================================================================== ARTICLE (Wikipedia-style page)
 SECTIONS = [
-    ("overview", "Overview"), ("scenario", "Mission scenario"), ("evidence", "Closest NASA evidence"),
-    ("gaps", "Evidence gaps"), ("map", "Test conditions map"), ("experiments", "Experiments"),
-    ("ask", "Ask the evidence"), ("earth", "Applications on Earth"),
+    ("ask", "Ask the evidence"), ("overview", "Overview"), ("scenario", "Mission scenario"),
+    ("evidence", "Closest NASA evidence"), ("gaps", "Evidence gaps"), ("map", "Test conditions map"),
+    ("experiments", "Experiments"), ("earth", "Applications on Earth"),
     ("method", "Methodology and use of AI"), ("references", "References"),
 ]
 
@@ -165,6 +168,113 @@ def heading(anchor):
 
 def placeholder(text):
     st.markdown(f'<div class="placeholder">{text}</div>', unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------- Ask the evidence (RAG + Groq)
+# Only these columns go to the model, to keep each request small (Groq free tier: about 8,000 tokens per minute).
+LLM_TEST_COLUMNS = ["experiment", "test_id", "material", "material_class", "oxygen_pct", "pressure_kpa",
+                    "airflow_cms", "flow_direction", "gravity", "suppressant", "outcome_category", "relevance", "why"]
+LLM_GAP_COLUMNS = ["pillar", "material_class", "tests_total", "tests_near", "status", "closest_test",
+                   "closest_d_o2", "closest_d_kpa", "o2_range_tested", "kpa_range_tested", "gravity_gap"]
+
+
+def secret(name):
+    """Environment variable first, then .streamlit/secrets.toml (local) or the Secrets box (Streamlit Cloud)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        return st.secrets.get(name, "")
+    except Exception:  # no secrets file
+        return ""
+
+
+def records(frame, columns):
+    return json.loads(frame[columns].to_json(orient="records"))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_retrieve(question):
+    return retrieve(question)
+
+
+# Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_answer(question, passages, context, model, _api_key):
+    return answer(question, passages, context, _api_key, model)
+
+
+def run_question(question, context):
+    result = {"question": question, "context": context, "passages": [], "text": None, "note": None, "error": None}
+    try:
+        with st.spinner("Searching NASA documents…"):
+            result["passages"] = cached_retrieve(question)
+        if not result["passages"]:
+            result["note"] = "No NASA documents are indexed yet. Run python scripts/ingest_documents.py first."
+            return result
+        api_key, model = secret("GROQ_API_KEY"), secret("GROQ_MODEL")
+        if not api_key or not model:
+            result["note"] = ("Showing the matching passages only. Set GROQ_API_KEY and GROQ_MODEL "
+                              "to get a written answer.")
+            return result
+        with st.spinner("Reading the evidence and writing an answer…"):
+            result["text"] = cached_answer(question, result["passages"], context, model, api_key)
+    except (ValueError, RuntimeError, OSError) as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def context_line(context):
+    if context["scenario"] is None:
+        return ("Answered from NASA documents only. Choose a mission scenario in the sidebar to also give it "
+                "the ranked tests and evidence gaps.")
+    tol = context["tolerance"]
+    return (f"Also given the 5 closest tests and the evidence gaps for {context['scenario']['name']} "
+            f"(pillar: {context['pillar']}, tolerance ±{tol['o2_pp']:g} pp O₂, ±{tol['kpa']:g} kPa), "
+            "as shown further down this page.")
+
+
+def ask_section(context):
+    """Question box, then the answer and its sources. A question from the home page is answered on arrival."""
+    with st.form("ask", border=False):
+        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
+        question = c1.text_input("Question", value=qp.get("q", ""), label_visibility="collapsed",
+                                 placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
+        asked = c2.form_submit_button("Ask", width="stretch")
+    question = question.strip()
+    if asked:
+        if question:
+            st.query_params["q"] = question  # keep it in the URL so a reload or shared link shows the same answer
+        else:
+            st.query_params.pop("q", None)
+
+    last = st.session_state.get("ask_result")
+    if question and (asked or last is None or last["question"] != question):
+        last = run_question(question, context)
+        st.session_state["ask_result"] = last
+    if not question or last is None or last["question"] != question:
+        st.caption("Ask about NASA's microgravity fire experiments, e.g. *What fabrics were tested in BASS?* "
+                   "The answer cites the NASA documents it used.")
+        return
+
+    if last["error"]:
+        alert("bad", escape(last["error"]), label="Error")
+    elif last["text"]:
+        with st.container(border=True):
+            st.markdown(last["text"])
+            st.caption("AI-generated from the sources below. Check them: a citation does not guarantee the claim is right.")
+    if last["note"]:
+        alert("info", escape(last["note"]), label="Note")
+    if last["passages"]:
+        st.markdown("**Sources**")
+        for i, p in enumerate(last["passages"], 1):
+            with st.expander(f"[S{i}] {p['title']}, PDF page {p['page']}"):
+                st.write(p["text"])
+                source = p.get("source_page_url") or p["pdf_url"]
+                st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+    st.caption(context_line(last["context"]))
+    if last["context"] != context:
+        alert("warn", "You changed the scenario or settings after this answer. Press <b>Ask</b> to update it.",
+              label="Out of date")
 
 
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
@@ -375,6 +485,12 @@ def article():
 </div>""", unsafe_allow_html=True)
 
     with main:
+        heading("ask")
+        st.markdown("<div class='hatnote'>Answers use only NASA documents (and, if you choose a scenario, the "
+                    "ranked tests below), with citations. If there is no evidence, the assistant says so.</div>",
+                    unsafe_allow_html=True)
+        ask_box = st.container()  # filled at the end, once the scenario settings below are known
+
         heading("overview")
         st.markdown(
             f"**Flame in Freefall** gathers NASA's {term('microgravity')} fire experiments into one table, ranks them "
@@ -390,6 +506,8 @@ def article():
         pil = None if pillar == "All" else pillar
         pts = df if pil is None else df[df["pillar"] == pil]
         o2_tol = kpa_tol = None
+        w_o2 = w_kpa = 1.0
+        n_rank = 10
 
         if p is None:
             alert("info", "<b>Choose a mission scenario in the sidebar</b> (ISS cabin, Moon base, exploration "
@@ -413,18 +531,21 @@ def article():
             st.caption(f"Tolerance box: {p['o2'] - o2_tol:g}–{p['o2'] + o2_tol:g}% O₂ and "
                        f"{p['kpa'] - kpa_tol:g}–{p['kpa'] + kpa_tol:g} kPa.")
 
+        ranked = gaps = None
         heading("evidence")
         if p is None:
             st.caption("Choose a scenario to rank the tests.")
         else:
-            evidence_table(rank(df, preset, pillar=pil, n=n_rank, w_o2=w_o2, w_kpa=w_kpa), p)
+            ranked = rank(df, preset, pillar=pil, n=n_rank, w_o2=w_o2, w_kpa=w_kpa)
+            evidence_table(ranked, p)
 
         heading("gaps")
         if p is None:
             st.caption("Choose a scenario to see which pillars and fuel types have tests near it.")
         else:
             gaps = gap(df, preset, o2_tol=o2_tol, kpa_tol=kpa_tol)
-            gap_banners(gaps if pil is None else gaps[gaps["pillar"] == pil], o2_tol, kpa_tol)
+            gaps = gaps if pil is None else gaps[gaps["pillar"] == pil]
+            gap_banners(gaps, o2_tol, kpa_tol)
 
         heading("map")
         conditions_map(pts, preset, p, o2_tol, kpa_tol)
@@ -447,13 +568,6 @@ def article():
                 st.markdown(desc, unsafe_allow_html=True)
                 placeholder("TODO: summary card, key findings with page citations, small chart")
 
-        heading("ask")
-        st.markdown("<div class='hatnote'>Answers use only NASA documents and the tests ranked above, with citations. "
-                    "If there is no evidence, the assistant says so.</div>", unsafe_allow_html=True)
-        question = st.text_input("Ask a question about fire safety evidence", value=qp.get("q", ""),
-                                 placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
-        placeholder("TODO [RAG 2]: answer(question, rank(...), gap(...)) → text with citations")
-
         heading("earth")
         placeholder("TODO [Pitch]: NASA spinoffs: firefighter air tanks, smoke detector, protective clothing")
 
@@ -465,10 +579,20 @@ def article():
             f"{term('tolerances', 'tolerance')} shown above).\n"
             f"- **{term('Outcome', 'outcome')} categories** for BASS/BASS-II are our reading of crew notes; "
             "the original note is always shown.\n"
-            "- **Use of AI:** TODO list tools used (code assistance, Gemini for answers).", unsafe_allow_html=True)
+            "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
 
         heading("references")
         placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
+
+        # The model gets exactly the ranking and gaps shown on the page, with the user's sliders applied.
+        context = {"scenario": None}
+        if p is not None:
+            context = {"scenario": {"name": preset, **p}, "pillar": pillar,
+                       "tolerance": {"o2_pp": o2_tol, "kpa": kpa_tol},
+                       "ranked_tests": records(ranked.head(5), LLM_TEST_COLUMNS),
+                       "gaps": records(gaps, LLM_GAP_COLUMNS)}
+        with ask_box:
+            ask_section(context)
 
     st.markdown("<hr><div class='tagline'>Built for NASA Space Apps Challenge 2026, Flame in Freefall. "
                 "Data: NASA Physical Sciences Informatics. Not affiliated with or endorsed by NASA.</div>",
