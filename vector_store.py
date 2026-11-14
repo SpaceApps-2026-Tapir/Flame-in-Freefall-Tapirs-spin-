@@ -1,17 +1,45 @@
 """Persistent Chroma PDF index. AI-assisted implementation."""
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
 
 STORE = Path(__file__).resolve().parent / "documents" / "chroma"
 
+# Experiment names that restrict a search to that experiment's documents. "SAME" only counts in
+# capitals, so the English word "same" ("is extinction the same...") does not trigger it.
+_EXPERIMENT_ANY_CASE = re.compile(r"\b(?:BASS-II|BASS|SAME-R|FLEX)\b", re.I)
+_EXPERIMENT_SAME = re.compile(r"\bSAME\b(?!-R)")
+
+# Bibliography chunks match questions through paper titles but contain no evidence.
+_CITATION = re.compile(r"\bet al\b|\bvol\.\s*\d|\bpp\.\s*\d|\bProc\.|\bno\.\s*\d|\bdoi\b|Conference on"
+                       r"|\b\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]")
+_REFERENCE_ENTRY = re.compile(r"\b\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]")
+
+
+def experiments_in(question):
+    """Experiment names in the question, and the question without them."""
+    found = {m.upper() for m in _EXPERIMENT_ANY_CASE.findall(question)} | set(_EXPERIMENT_SAME.findall(question))
+    stripped = _EXPERIMENT_SAME.sub(" ", _EXPERIMENT_ANY_CASE.sub(" ", question))
+    return found, stripped
+
+
+def is_reference_list(text):
+    return len(_CITATION.findall(text)) >= 4 or len(_REFERENCE_ENTRY.findall(text)) >= 2
+
+
+@lru_cache(maxsize=1)
+def _default_embedding():
+    # Loading the ONNX model takes seconds; keep one instance per process.
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+    return ONNXMiniLM_L6_V2()
+
 
 def client_and_embedding(path, embedding_function=None):
     import chromadb
-    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
     return chromadb.PersistentClient(path=str(path)), (
-        embedding_function if embedding_function is not None else ONNXMiniLM_L6_V2())
+        embedding_function if embedding_function is not None else _default_embedding())
 
 
 def build_index(chunks, path=STORE, embedding_function=None):
@@ -47,13 +75,12 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
     collection = client.get_collection(name, embedding_function=embedding)
     # Short experiment acronyms are poorly represented by semantic embeddings.
     # Restrict explicit experiment questions to their documented corpus.
-    experiments = re.findall(r"\b(?:BASS-II|BASS|SAME-R|SAME|FLEX)\b", question.upper())
+    experiments, content_query = experiments_in(question)
     query_options = {}
     if experiments:
-        query_options["where"] = {"experiment": {"$in": list(set(experiments))}}
+        query_options["where"] = {"experiment": {"$in": sorted(experiments)}}
     # Remove repeated experiment labels and question boilerplate from the semantic
     # query so title slides do not outrank actual descriptions and results.
-    content_query = re.sub(r"\b(?:BASS-II|BASS|SAME-R|SAME|FLEX)\b", "", question, flags=re.I)
     content_query = re.sub(r"\b(?:what|which|were|was|the|in|experiment|experiments|cite|supporting|passages)\b",
                            " ", content_query, flags=re.I)
     content_query = " ".join(content_query.split()).strip(" ?.,") or question
@@ -94,8 +121,8 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
             continue
         if len(text.split()) < 25:
             continue
-        if re.search(r"\.{6,}", text):
-            continue  # PDF tables of contents point to evidence but contain none.
+        if re.search(r"\.{6,}", text) or is_reference_list(text):
+            continue  # Tables of contents and reference lists point to evidence but contain none.
         page_key = (metadata.get("document_id", metadata.get("title")), metadata["page"])
         if page_key in pages_seen:
             continue
@@ -104,7 +131,8 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
         neighbours = [(other_id, other_text) for other_id, (other_text, other_meta) in records.items()
                       if other_meta.get("document_id", other_meta.get("title")) == page_key[0]
                       and other_meta["page"] == page_key[1]
-                      and abs(int(other_id) - int(ident)) <= 1]
+                      and abs(int(other_id) - int(ident)) <= 1
+                      and (other_id == ident or not is_reference_list(other_text))]
         neighbours.sort(key=lambda item: int(item[0]))
         passages.append({**metadata, "text": "\n".join(t for _, t in neighbours),
                          "retrieval_score": scores[ident]})
