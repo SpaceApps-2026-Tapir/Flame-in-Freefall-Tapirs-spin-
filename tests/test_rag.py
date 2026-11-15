@@ -9,6 +9,55 @@ from rag import answer, retrieve
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_same_r_query_retains_context_and_report_aliases(self):
+        from vector_store import search
+        collection = MagicMock()
+        collection.count.return_value = 1
+        collection.query.return_value = {"ids": [["0"]], "distances": [[0.1]]}
+        collection.get.return_value = {"ids": ["0"], "documents": [
+            "SAMER extended SAME to study additional materials and test conditions. " * 4],
+            "metadatas": [{"document_id": "sam er", "title": "SAME-R", "page": 2}]}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("vector_store.client_and_embedding", return_value=(client, None)):
+                search("What were the objectives of SAME-R?", path=path)
+        query = collection.query.call_args.kwargs
+        self.assertIn("SAME-R", query["query_texts"][0])
+        self.assertIn("SAMER", query["query_texts"][0])
+        self.assertEqual(query["where"], {"experiment": {"$in": ["SAME-R"]}})
+
+    def test_supported_definition_uses_structured_source_ids(self):
+        passage = {"title": "ISS Researchers Guide", "page": 43,
+                   "text": "Microgravity describes an environment where gravitational body force is significantly less than on Earth."}
+        response = json.dumps({"status": "answered", "claims": [
+            {"text": "Microgravity describes conditions with much smaller gravitational body force than on Earth.",
+             "sources": ["S1"]}]})
+        with patch("rag._generate", return_value=response) as generate:
+            text = answer("What is microgravity?", [passage], {}, "key", "openai/gpt-oss-120b")
+        self.assertIn("[S1]", text)
+        self.assertIn("Microgravity describes", text)
+        payload = generate.call_args.args[0]
+        self.assertTrue(payload["response_format"]["json_schema"]["strict"])
+
+    def test_structured_unknown_ids_retry_and_fail(self):
+        response = json.dumps({"status": "answered", "claims": [{"text": "Unsupported", "sources": ["S9"]}]})
+        with patch("rag._generate", return_value=response) as generate:
+            with self.assertRaisesRegex(RuntimeError, "citations"):
+                answer("question", [{}], {}, "key", "openai/gpt-oss-120b")
+            self.assertEqual(generate.call_count, 2)
+
+    def test_structured_refusal_and_missing_sources(self):
+        from rag import NO_EVIDENCE, render_structured
+        with patch("rag._generate", return_value=json.dumps({"status": "insufficient_evidence", "claims": []})):
+            self.assertEqual(answer("question", [{}], {}, "key", "openai/gpt-oss-120b"), NO_EVIDENCE)
+        self.assertIsNone(render_structured(json.dumps({"status": "answered", "claims": [
+            {"text": "An uncited claim", "sources": []}]}), ["S1"]))
+        self.assertIsNone(render_structured(json.dumps({"status": "answered", "claims": [
+            {"text": "Claim [S9]", "sources": ["S1"]}]}), ["S1"]))
+
     def test_persistent_retrieval_and_reindex_replaces_old_documents(self):
         from vector_store import build_index, search
         from chromadb.api.types import EmbeddingFunction

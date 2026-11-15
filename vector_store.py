@@ -115,7 +115,12 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
     content_query = re.sub(r"\b(?:what|which|were|was|the|in|experiment|experiments|cite|supporting|passages)\b",
                            " ", content_query, flags=re.I)
     content_query = " ".join(content_query.split()).strip(" ?.,") or question
-    result = collection.query(query_texts=[content_query], n_results=min(40, collection.count()),
+    # Keep experiment context for semantic search. Metadata filtering alone does
+    # not tell the embedding model what "objectives of" refers to.
+    semantic_query = question
+    if "SAME-R" in experiments:
+        semantic_query += " Smoke Aerosol Measurement Experiment Re-flight SAMER SAME-2"
+    result = collection.query(query_texts=[semantic_query], n_results=min(40, collection.count()),
                               **query_options, include=["documents", "metadatas", "distances"])
     # Combine semantic ranking with lexical evidence. Read text already in Chroma;
     # this requires no new embeddings or PDF downloads.

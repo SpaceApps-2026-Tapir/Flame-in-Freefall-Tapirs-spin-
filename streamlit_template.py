@@ -272,6 +272,7 @@ def records(frame, columns):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
+    # Experiment-context retrieval v2; changing this wrapper invalidates old results.
     return retrieve(question)
 
 
@@ -282,7 +283,7 @@ def cached_index_inventory():
 
 # Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_answer(question, passages, context, model, _api_key):
+def cached_answer(question, passages, context, model, _api_key, pipeline_version):
     return answer(question, passages, context, _api_key, model)
 
 
@@ -312,7 +313,7 @@ def run_question(question, context):
                               "to get a written answer.")
             return result
         with st.spinner("Reading the evidence and writing an answer…"):
-            result["text"] = cached_answer(question, result["passages"], context, model, api_key)
+            result["text"] = cached_answer(question, result["passages"], context, model, api_key, "structured-v1")
     except (ValueError, RuntimeError, OSError) as exc:
         result["error"] = str(exc)
     return result
@@ -329,25 +330,27 @@ def context_line(context):
 
 
 def show_answer(last):
+    from citations import ieee_citations
+    display_text, _, labels = ieee_citations(last["text"], last["passages"])
     if last["error"]:
         alert("bad", escape(last["error"]), label="Error")
     elif last["text"] in (NO_EVIDENCE, NO_PASSAGES):
-        alert("info", "<b>The NASA documents in this atlas do not answer this question.</b> The atlas only knows "
-                      "what NASA's microgravity fire reports say, so it cannot answer general questions "
-                      "(like <i>what is fire?</i>) or compare things the reports never compare.<br>"
+        alert("info", "<b>The retrieved passages do not provide enough evidence to answer this question.</b> "
+                      "Other pages or documents may contain the answer. General definitions can be answered "
+                      "when the retrieved sources explain them.<br>"
                       "Try naming an experiment, a material or a condition, for example: <i>Which materials "
                       "had the highest flame spread rate in BASS-II?</i> or <i>How did oxygen concentration "
                       "change flame spread over PMMA?</i>", label="No answer")
     elif last["text"]:
         with st.container(border=True):
-            st.markdown(last["text"])
+            st.markdown(display_text)
             st.caption("AI-generated from the sources below. Check them: a citation does not guarantee the claim is right.")
     if last["note"]:
         alert("info", escape(last["note"]), label="Note")
     if last["passages"]:
-        st.markdown("**Sources** (open one to read the passage)")
+        st.markdown("**Retrieved passages** (open one to read the evidence)")
         for i, p in enumerate(last["passages"], 1):
-            with st.expander(f"[S{i}] {p['title']}, PDF page {p['page']}"):
+            with st.expander(f"[{labels[i - 1]}] {p['title']}, PDF page {p['page']}"):
                 st.write(p["text"])
                 source = p.get("source_page_url") or p["pdf_url"]
                 st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
@@ -835,7 +838,7 @@ def about_page():
             "1. A local search (no AI) finds the 5 passages in NASA's PDF reports that best match the question.\n"
             "2. A language model hosted by Groq writes an answer from those passages only. If you chose a "
             "scenario, it also gets the closest tests and gaps from the data table.\n"
-            "3. Every claim must cite a passage, [S1] to [S5]. Answers that cite anything else are rejected, and if "
+            "3. Claims cite retrieved sources, displayed as IEEE-style numbered references with PDF page locators. Invalid source IDs are rejected, and if "
             "the passages do not cover the question, it says so.\n\n"
             "Numbers come from the passages or the data table, never from the model's memory. "
             "Check the passages: a citation does not prove the claim is right.")
