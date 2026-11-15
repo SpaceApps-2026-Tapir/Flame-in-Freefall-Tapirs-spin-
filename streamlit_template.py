@@ -617,10 +617,10 @@ def scenario_page():
     if p is None:
         alert("info", "<b>Choose a mission scenario above</b> (ISS cabin, Moon base, exploration atmosphere, "
                       "spacesuit or Mars habitat). This report then shows:<br>"
-                      "1. a <b>key finding</b> in one sentence,<br>"
-                      "2. <b>where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
-                      "3. the <b>closest NASA tests</b>, with the original NASA notes,<br>"
-                      "4. a <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
+                      "1. A <b>key finding</b> in one sentence,<br>"
+                      "2. <b>Where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
+                      "3. The <b>closest NASA tests</b>, with the original NASA notes,<br>"
+                      "4. A <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
         h2("Test conditions map")
         conditions_map(pts, None, None, None, None)
         return
