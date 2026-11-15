@@ -25,7 +25,7 @@ SYSTEM = """You drive an interactive 3D chart of NASA microgravity fire-safety t
 - run_analysis: run one of the available analyses on the current design matrix.
 - get_state: see the current dataset, variables, filters, view and available analyses.
 - suggest_next: offer the reader one next stop (another chart, the evidence page for a scenario/pillar, the
-  test explorer, the models page, or Ask the evidence for answers from NASA reports) when it would answer their question better. Use it at most once per turn.
+  test explorer, or Ask the evidence for answers from NASA reports) when it would answer their question better. Use it at most once per turn.
 Rules:
 - Act with tools first, then answer in 2-4 short sentences in plain language: what the chart now shows and
   what stands out. Talk about tests, oxygen, pressure, flames and smoke, not about statistics: do not name
@@ -71,7 +71,7 @@ TOOLS = [
         "name": "suggest_next", "description": "Offer a link to the next place to look.",
         "parameters": {"type": "object", "properties": {
             "label": {"type": "string", "description": "short link text, e.g. 'Read the evidence for the Moon base'"},
-            "page": {"type": "string", "enum": ["ask", "scenario", "visual", "explore", "analysis", "about"],
+            "page": {"type": "string", "enum": ["ask", "scenario", "visual", "explore", "about"],
                      "description": "ask = answer from NASA reports; scenario = evidence report for a scenario/pillar"},
             "scenario": {"type": "string"}, "pillar": {"type": "string", "enum": ["prevention", "detection", "suppression"]},
             "data": {"type": "string", "enum": list(L.DATASETS)}, "chart": {"type": "string", "enum": list(L.CHARTS)},

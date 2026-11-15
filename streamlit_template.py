@@ -152,7 +152,7 @@ def home():
 
 # ====================================================================== shared page frame (every page except home)
 PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("visual", "Explore visually"),
-         ("explore", "Data explorer"), ("analysis", "Models"), ("about", "About")]
+         ("explore", "Data explorer"), ("about", "About")]
 PAGE_CSS = """
 <style>
   [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
@@ -999,16 +999,10 @@ if page in ("ask", "scenario", "explore", "about"):
     {"ask": ask_page, "scenario": scenario_page, "explore": explore, "about": about_page}[page]()
     site_footer()
 elif page == "visual":
-    from visual_lab import page as visual_page  # loaded lazily: scikit-learn / umap only on this page
+    from visual_lab import page as visual_page  # loaded lazily: scikit-learn only on this page
     page_header("visual", "Explore the data visually",
                 "Ask a question and the assistant picks the chart, or pick one yourself.")
     visual_page(header=False)
-    site_footer()
-elif page == "analysis":
-    from analysis import page as analysis_page
-    page_header("analysis", "Models", "Machine-learning models over the raw NASA measurements. "
-                "Every model is scored on data it did not see.")
-    analysis_page(df, header=False)
     site_footer()
 else:
     home()

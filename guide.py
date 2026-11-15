@@ -69,8 +69,6 @@ BRANCHES = [  # the main paths from the landing page into the atlas, from broad 
          params=dict(page="visual", data="all", chart="evidence"), teaser="evidence"),
     dict(title="Filter every test", sub="All 678 tests, any column, with sources",
          params=dict(page="explore"), teaser="table"),
-    dict(title="How the numbers were made", sub="Models, scores and their limits",
-         params=dict(page="analysis"), teaser="models"),
 ]
 
 assert all(b["params"].get("scenario", "ISS cabin") in PRESETS for b in BRANCHES)
