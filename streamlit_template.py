@@ -15,6 +15,8 @@ from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
 from references import dataset_reference, references_for
 from security import csv_bytes, safe_http_url, safe_model_markdown, validate_question
 from vector_store import index_inventory
+from guide import route
+from story import hero, overview
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -119,22 +121,8 @@ def home():
     st.markdown("<div class='title'>Flame in Freefall</div>"
                 "<div class='subtitle'>The Fire Safety Evidence Atlas</div>", unsafe_allow_html=True)
 
-    scenario_links = [link(name.replace(" (challenge brief)", ""),
-                           f"{s['o2']:g}% O₂ · {s['kpa'] / 6.895:.1f} psi",
-                           hint=f"{s['o2']:g}% oxygen at {s['kpa']:g} kPa ({s['kpa'] / 6.895:.1f} psi), "
-                                f"{s['gravity']} gravity. Source: {s['source']}",
-                           page="scenario", scenario=name)
-                      for name, s in PRESETS.items()]
-
-    pillar_links = [
-        link("Prevention", f"BASS · BASS-II · {n.get('BASS', 0) + n.get('BASS-II', 0)} tests",
-             hint=tip("prevention"), page="scenario", pillar="prevention"),
-        link("Detection", f"SAME · SAME-R · {n.get('SAME', 0) + n.get('SAME-R', 0)} tests",
-             hint=tip("detection"), page="scenario", pillar="detection"),
-        link("Suppression", f"FLEX · {n.get('FLEX', 0)} tests",
-             hint=tip("suppression"), page="scenario", pillar="suppression"),
-    ]
     st.markdown(f"<div class='emblem'>{EMBLEM}</div>", unsafe_allow_html=True)
+    hero(df)  # the theme that ties the page together (story.py)
 
     # search bar: one question box + blue button; it opens the Ask page with the answer
     _, c, _ = st.columns([0.6, 3, 0.6])
@@ -145,14 +133,17 @@ def home():
                               label_visibility="collapsed")
             go = s2.form_submit_button("Search")
         if go:
-            st.query_params.from_dict({"page": "ask", "q": q.strip()} if q.strip() else {"page": "ask"})
+            # guide.py: pattern questions open a chart, explanation questions open Ask the evidence
+            dest = route(q) if q.strip() else {"page": "ask"}
+            st.query_params.from_dict({k: v for k, v in dest.items() if k != "why"})
             st.rerun()
         st.markdown("<div class='langs'><a href='?page=scenario' target='_self'>Scenario report</a> · "
+                    "<a href='?page=visual' target='_self'>Explore visually</a> · "
                     f"<a href='?page=explore' target='_self'>Filter all {len(df)} tests</a> · "
                     "<a href='?page=about' target='_self'>About this atlas</a></div>", unsafe_allow_html=True)
 
-    st.markdown("<nav class='portal-grid' aria-label='Fire safety topics and mission scenarios'>"
-                + "".join(pillar_links + scenario_links) + "</nav>", unsafe_allow_html=True)
+    # simulator -> map of pillars x scenarios (replaces the portal cards) -> finding -> next tests -> paths (story.py)
+    overview(df)
 
     st.markdown(f"<div class='note'>{len(df)} microgravity fire tests from NASA Physical Sciences Informatics · "
                 "Built for NASA Space Apps Challenge 2026 · Not affiliated with or endorsed by NASA</div>",
@@ -160,7 +151,8 @@ def home():
 
 
 # ====================================================================== shared page frame (every page except home)
-PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("explore", "Data explorer"), ("about", "About")]
+PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("visual", "Explore visually"),
+         ("explore", "Data explorer"), ("analysis", "Models"), ("about", "About")]
 PAGE_CSS = """
 <style>
   [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
@@ -1005,6 +997,18 @@ if page == "article":  # old links: the article page was split into Ask and Scen
     st.query_params["page"] = page
 if page in ("ask", "scenario", "explore", "about"):
     {"ask": ask_page, "scenario": scenario_page, "explore": explore, "about": about_page}[page]()
+    site_footer()
+elif page == "visual":
+    from visual_lab import page as visual_page  # loaded lazily: scikit-learn / umap only on this page
+    page_header("visual", "Explore the data visually",
+                "Ask a question and the assistant picks the chart, or pick one yourself.")
+    visual_page(header=False)
+    site_footer()
+elif page == "analysis":
+    from analysis import page as analysis_page
+    page_header("analysis", "Models", "Machine-learning models over the raw NASA measurements. "
+                "Every model is scored on data it did not see.")
+    analysis_page(df, header=False)
     site_footer()
 else:
     home()

@@ -337,3 +337,5 @@ websockets==17.4
     #   uvicorn
 yarl==1.25.1
     # via aiohttp
+scikit-learn>=1.9
+umap-learn>=0.5

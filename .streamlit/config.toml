@@ -10,3 +10,7 @@ gatherUsageStats = false
 
 [client]
 showErrorDetails = "none"
+fileWatcherType = "poll"
+
+[browser]
+gatherUsageStats = false
