@@ -12,6 +12,8 @@ from pypdf import PdfReader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from vector_store import build_index
 ROOT = Path(__file__).resolve().parents[1] / "documents"
+MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_PDF_PAGES = 500
 
 
 def ingest():
@@ -43,20 +45,28 @@ def ingest():
                     result = gdown.download(id=file_id, output=str(temporary), use_cookies=False, timeout=60)
                     if not result:
                         raise ValueError(f"{doc_id}: Drive download failed.")
+                    if temporary.stat().st_size > MAX_PDF_BYTES:
+                        raise ValueError(f"{doc_id}: expected a PDF no larger than 50 MB.")
                     data = temporary.read_bytes()
                 finally:
                     temporary.unlink(missing_ok=True)
             else:
-                with urlopen(Request(url, headers={"User-Agent": "FlameInFreefall/0.1"}), timeout=60) as response:
-                    data = response.read(50 * 1024 * 1024 + 1)
-            if len(data) > 50 * 1024 * 1024 or not data.startswith(b"%PDF-"):
+                # Scheme and non-empty host were validated above.
+                with urlopen(Request(url, headers={"User-Agent": "FlameInFreefall/0.1"}), timeout=60) as response:  # nosec B310
+                    data = response.read(MAX_PDF_BYTES + 1)
+            if len(data) > MAX_PDF_BYTES or not data.startswith(b"%PDF-"):
                 raise ValueError(f"{doc_id}: expected a PDF no larger than 50 MB.")
-            PdfReader(io.BytesIO(data))
+            reader = PdfReader(io.BytesIO(data))
+            if len(reader.pages) > MAX_PDF_PAGES:
+                raise ValueError(f"{doc_id}: PDF has more than {MAX_PDF_PAGES} pages.")
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_bytes(data)
         before = len(chunks)
         digest = hashlib.sha256(cache.read_bytes()).hexdigest()
-        for page_no, page in enumerate(PdfReader(cache).pages, 1):
+        reader = PdfReader(cache)
+        if len(reader.pages) > MAX_PDF_PAGES:
+            raise ValueError(f"{doc_id}: PDF has more than {MAX_PDF_PAGES} pages.")
+        for page_no, page in enumerate(reader.pages, 1):
             words = (page.extract_text() or "").split()
             # Short passages reduce truncation by the MiniLM embedding model.
             for start in range(0, len(words), 80):

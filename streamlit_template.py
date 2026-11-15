@@ -13,6 +13,7 @@ from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
 from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
 from references import dataset_reference, references_for
+from security import csv_bytes, safe_http_url, safe_model_markdown, validate_question
 from vector_store import index_inventory
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
@@ -259,9 +260,9 @@ EXAMPLES = ["What fabrics were tested in BASS?",
 def secret(name):
     """Environment variable first, then .streamlit/secrets.toml (local) or the Secrets box (Streamlit Cloud)."""
     if os.environ.get(name):
-        return os.environ[name]
+        return os.environ[name].strip()
     try:
-        return st.secrets.get(name, "")
+        return str(st.secrets.get(name, "")).strip()
     except Exception:  # no secrets file
         return ""
 
@@ -300,6 +301,10 @@ def scenario_context(preset, pillar, o2_tol, kpa_tol, w_o2, w_kpa):
 
 def run_question(question, context):
     result = {"question": question, "context": context, "passages": [], "text": None, "note": None, "error": None}
+    question_error = validate_question(question)
+    if question_error:
+        result["error"] = question_error
+        return result
     try:
         with st.spinner("Searching NASA documents…"):
             result["passages"] = cached_retrieve(question)
@@ -340,7 +345,7 @@ def show_answer(last):
                       "change flame spread over PMMA?</i>", label="No answer")
     elif last["text"]:
         with st.container(border=True):
-            st.markdown(last["text"])
+            st.markdown(safe_model_markdown(last["text"]))
             st.caption("AI-generated from the sources below. Check them: a citation does not guarantee the claim is right.")
     if last["note"]:
         alert("info", escape(last["note"]), label="Note")
@@ -349,8 +354,11 @@ def show_answer(last):
         for i, p in enumerate(last["passages"], 1):
             with st.expander(f"[S{i}] {p['title']}, PDF page {p['page']}"):
                 st.write(p["text"])
-                source = p.get("source_page_url") or p["pdf_url"]
-                st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+                source = safe_http_url(p.get("source_page_url") or p.get("pdf_url"))
+                if source:
+                    st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+                else:
+                    st.caption("Source link unavailable: the PDF URL is not a valid http(s) address.")
     st.caption(context_line(last["context"]))
 
 
@@ -409,7 +417,7 @@ def _ieee_citation_html(ref):
     """Escape an IEEE citation and make its DOI or source URL clickable."""
     citation = escape(ref.get("citation", ""))
     target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
-              else ref.get("url", ""))
+              else safe_http_url(ref.get("url")))
     if not target:
         return citation
     url = escape(target, quote=True)
@@ -427,12 +435,13 @@ def reference_line(ref, show_citation=False, number=None):
     title = escape(ref.get("title", "Untitled reference"))
     year = f" ({escape(str(ref['year']))})" if ref.get("year") else ""
     ident = f" <code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else ""
+    url = safe_http_url(ref.get("url"))
     if ref.get("doi"):
         doi = escape(ref["doi"], quote=True)
         link = (f"<a href='https://doi.org/{doi}' target='_blank' rel='noopener noreferrer'>"
                 f"DOI {doi}</a>")
-    elif ref.get("url"):
-        link = (f"<a href='{escape(ref['url'], quote=True)}' target='_blank' rel='noopener noreferrer'>"
+    elif url:
+        link = (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer'>"
                 "source</a>")
     else:
         link = "no link recorded"
@@ -527,8 +536,8 @@ def test_details(r):
                    f"**{term('Suppressant', 'suppressant')}:** {escape(val(r.suppressant))}  \n"
                    f"**{term('Outcome', 'outcome')} (our category):** {term(r.outcome_category)}  \n"
                    f"**{term('Relevance', 'relevance')}:** {r.relevance:.2f}", unsafe_allow_html=True)
-        st.markdown(f"**Original NASA note:** {val(r.outcome_raw)}")
-        st.markdown(f"**Test conditions as logged:** {val(r.condition_detail)}")
+        st.markdown(f"**Original NASA note:** {escape(val(r.outcome_raw))}")
+        st.markdown(f"**Test conditions as logged:** {escape(val(r.condition_detail))}")
         if not pd.isna(r.assumed_fields):
             alert("info", f"{term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
                           "(not logged per test).", label="Note")
@@ -536,10 +545,10 @@ def test_details(r):
         ref = dataset_reference(r.experiment)
         if ref:
             label = escape(ref.get("identifier") or "PSI dataset")
-            if ref.get("doi"):
-                source += f" · Dataset [{label}](https://doi.org/{ref['doi']})"
-            elif ref.get("url"):
-                source += f" · Dataset [{label}]({ref['url']})"
+            target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
+                      else safe_http_url(ref.get("url")))
+            if target:
+                source += f" · Dataset [{label}]({target})"
         st.caption(source)
 
 
@@ -561,10 +570,12 @@ def gap_banners(gaps, o2_tol, kpa_tol):
     for pillar_name, g in gaps.groupby("pillar", sort=False):
         st.markdown(f"**{term(pillar_name.capitalize(), pillar_name)}**", unsafe_allow_html=True)
         for r in g.itertuples():
-            msg = (f"<b>{term(r.material_class)}</b>: {r.tests_near} of {r.tests_total} tests within {tol}. "
-                   f"Closest: {r.closest_test} at {r.closest_o2_pct:g}% {o2}, {r.closest_kpa:g} {kpa} "
-                   f"(<b>{r.closest_d_o2:+.1f} {pp} O₂, {r.closest_d_kpa:+.1f} kPa</b> from the scenario). "
-                   f"Tested: {r.o2_range_tested} O₂, {r.kpa_range_tested}, gravity: {term(r.gravity_tested)}.")
+            msg = (f"<b>{term(r.material_class)}</b>: {int(r.tests_near)} of {int(r.tests_total)} tests "
+                   f"within {tol}. Closest: {escape(str(r.closest_test))} at {r.closest_o2_pct:g}% {o2}, "
+                   f"{r.closest_kpa:g} {kpa} (<b>{r.closest_d_o2:+.1f} {pp} O₂, "
+                   f"{r.closest_d_kpa:+.1f} kPa</b> from the scenario). "
+                   f"Tested: {escape(str(r.o2_range_tested))} O₂, {escape(str(r.kpa_range_tested))}, "
+                   f"gravity: {term(r.gravity_tested)}.")
             if r.verdict == "gap":
                 over_o2 = max(0.0, abs(r.closest_d_o2) - o2_tol)
                 over_kpa = max(0.0, abs(r.closest_d_kpa) - kpa_tol)
@@ -621,7 +632,7 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
 def key_finding(gaps, preset, p, o2_tol, kpa_tol):
     """One plain-language summary of the gap table: which fuel groups have tests near the scenario, which do not."""
     def names(rows):
-        return ", ".join(f"{term(r.material_class)} ({r.pillar})" for r in rows)
+        return ", ".join(f"{term(r.material_class)} ({escape(str(r.pillar))})" for r in rows)
 
     near = [r for r in gaps.itertuples() if r.status != "GAP"]
     far = [r for r in gaps.itertuples() if r.status == "GAP"]
@@ -760,7 +771,7 @@ def index_summary_html(summary):
 def index_pdf_html(rows):
     def pdf_link(row):
         title = escape(row["PDF"])
-        url = row.get("URL", "")
+        url = safe_http_url(row.get("URL", ""))
         if not url:
             return title
         return (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer' "
@@ -986,7 +997,7 @@ def explore():
         return
     st.dataframe(res, hide_index=True, width="stretch", column_config={
         c: st.column_config.Column(LABELS[c], help=tip(COLUMN_HELP.get(c, c))) for c in res.columns})
-    st.download_button("Download these tests (.csv)", res.to_csv(index=False).encode("utf-8"),
+    st.download_button("Download these tests (.csv)", csv_bytes(res),
                        file_name="flame_in_freefall_tests.csv", mime="text/csv")
 
 

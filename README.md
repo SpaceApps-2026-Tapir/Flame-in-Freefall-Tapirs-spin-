@@ -68,8 +68,22 @@ irrelevant even when there is no supporting evidence. No relevance threshold
 is enabled until calibrated on real questions. Citation IDs are checked, but factual support still needs
 human review. Try supported, unrelated, and unanswerable questions before use.
 
-Offline checks: `uv run python -m unittest discover -s tests`.
+Offline checks: `uv run --python 3.14 python -m unittest discover -s tests`.
 Groq integration follows the [Chat Completions API](https://console.groq.com/docs/api-reference).
+
+## Security
+
+Basic hardening and deployment guidance are in [SECURITY.md](SECURITY.md).
+The app has no built-in authentication: put it behind an authenticated reverse
+proxy if it is public, and use a dedicated Groq key with a spending limit. Keep
+keys out of Git and review the deployment checklist before exposing the app.
+
+The checked-in `.streamlit/config.toml` enables XSRF/CORS protection, disables
+static file serving, limits uploads and hides error details. Questions are
+capped at 2,000 characters; model output cannot add Markdown links or images;
+PDF links must be `http(s)`; and CSV downloads neutralise spreadsheet formula
+prefixes. `SECURITY.md` also records the current `chromadb` advisories and why
+they do not apply to this app's local, in-process index.
 
 ## Team members
 
