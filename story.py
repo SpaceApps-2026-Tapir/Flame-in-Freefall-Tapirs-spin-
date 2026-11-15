@@ -154,8 +154,8 @@ def hero(df):
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(f"""
 <div class='thesis'>
-  <p>A Moon base will breathe <b>30–34% oxygen</b>. In that air, a fire may no longer put itself out —
-  and NASA has never tested how solid materials burn there.</p>
+  <p>A Moon base will breathe <b>30–34% oxygen</b>. In that air, a fire may burn until its fuel is gone.
+  NASA has never tested how solid materials burn there.</p>
   <div class='chips'>
     <span class='chip'><b>{len(df)}</b> NASA fire tests on the ISS</span>
     <span class='chip red'><b>{solids_moon}</b> with solids in Moon-base air</span>
