@@ -21,7 +21,7 @@ from sklearn.linear_model import LogisticRegression
 
 RAW = Path(__file__).resolve().parent / "data" / "raw" / "flex_droplets.csv"
 FEATS = ["o2_pct", "co2_pct", "he_pct", "pressure_kpa", "d0_mm", "heptane"]
-FUEL_COLOR = {"Methanol": "#eb6834", "Heptane": "#2a78d6"}
+FUEL_COLOR = {"Methanol": "#2a78d6", "Heptane": "#eb6834"}
 
 
 @lru_cache(maxsize=1)
@@ -226,6 +226,7 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
                              out=bool(sim["p_self_ext"] >= 0.5), g=float(g), dark=theme == "dark"))
     serif = "'Source Sans Pro','Source Sans 3',system-ui,-apple-system,'Segoe UI',sans-serif"  # the site's font
     return f"""<meta charset="utf-8">
+<style>html, body {{ margin: 0; padding: 0; overflow: hidden; background: transparent; }}</style>
 <div id="w" style="position:relative;width:100%;height:{height}px;overflow:hidden;font-family:{serif}">
   <canvas id="c" style="width:100%;height:100%;display:block"></canvas>
   <button id="rp" style="position:absolute;right:10px;top:8px;background:transparent;border:none;padding:0;
@@ -238,10 +239,12 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
   const THEMES = {{dark: {{bg: "#202735", ink: "#e8ecf2", soft: "#9aa3b2", faint: "#3a4558"}},
                   light: {{bg: "#ffffff", ink: "#1b1b1b", soft: "#6b6b6b", faint: "#e4e4e4"}}}};
   let C = THEMES[P.dark ? "dark" : "light"];
+  let ACC = "#2a5fb0";                                                  // one accent colour per fuel, per theme
   function readTheme() {{
     try {{
       const app = window.parent.document.querySelector('[data-testid="stApp"]') || window.parent.document.body;
-      const m = getComputedStyle(app).backgroundColor.match(/[\d.]+/g).map(Number);
+      const m = getComputedStyle(app).backgroundColor.match(/[0-9.]+/g).map(Number);
+      if (m.length > 3 && m[3] === 0) throw new Error("transparent background");   // not inside the app
       const dark = (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) < 128;
       C = Object.assign({{}}, THEMES[dark ? "dark" : "light"], {{bg: `rgb(${{m[0]}},${{m[1]}},${{m[2]}})`}});
     }} catch (e) {{
@@ -252,7 +255,6 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
     try {{ rp.style.color = C.soft; }} catch (e) {{}}   // the button may not exist yet on the first call
   }}
   readTheme(); setInterval(readTheme, 700);
-  let ACC = "#2a5fb0";                                                  // one accent colour per fuel, per theme
   const cv = document.getElementById("c"), x = cv.getContext("2d"), rp = document.getElementById("rp");
   rp.style.color = C.soft;
   let W, H;
@@ -289,6 +291,12 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
   }}
 
   function frame(now) {{
+    requestAnimationFrame(frame);                                       // keep the loop alive even if a frame fails
+    try {{ draw(now); }} catch (e) {{ console.warn("burn figure:", e); }}
+  }}
+  function draw(now) {{
+    if (cv.clientWidth !== W || cv.clientHeight !== H) size();          // iframe shown or resized after load
+    if (!W || !H) return;
     const dt = Math.min(.05, (now - last) / 1000); last = now; const T = now / 1000;
     if (outT !== null && now - outT > 6000) {{ t0 = now; dots = []; outT = null; }}
     const tr = (now - t0) / 1000 * speed, t = Math.min(tr, P.t_end), burning = tr < P.t_end;
@@ -380,7 +388,6 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
     x.font = `13px ${{SERIF}}`; x.fillStyle = burning ? C.ink : (P.out ? "#1b7a55" : "#a8332b");
     x.fillText(burning ? (P.out ? "burning · will go out by itself" : "burning · will keep going")
                        : (P.out ? "ending: self-extinguished" : "ending: fuel used up"), 12, H - 14);
-    requestAnimationFrame(frame);
   }}
   requestAnimationFrame(frame);
 }})();

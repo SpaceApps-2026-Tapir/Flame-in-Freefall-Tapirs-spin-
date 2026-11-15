@@ -165,7 +165,7 @@ def hero(df):
 
 
 FLEX_RAW = Path(__file__).resolve().parent / "data" / "raw" / "flex_droplets.csv"
-FUELS = [("Methanol", "#eb6834"), ("Heptane", "#2a78d6")]
+FUELS = [("Methanol", "#2a78d6"), ("Heptane", "#eb6834")]  # same colours as the burn figure
 FEATS = ["o2_pct", "co2_pct", "he_pct", "pressure_kpa", "heptane", "d0_mm"]
 
 
