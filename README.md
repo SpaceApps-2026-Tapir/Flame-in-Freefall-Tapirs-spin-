@@ -76,6 +76,10 @@ the citation markers. Other models retain text citation validation. Definitions
 are allowed when supported by retrieved passages. A refusal means these passages
 were insufficient, not that every document in the collection lacks the answer.
 Source IDs validate references, not the factual correctness of a claim.
+The UI displays IEEE-style numeric citations in first-appearance order, such as
+`[1, p. 43]`. Multiple passages from one document share a reference number. Document
+titles, PDF page numbers and source links appear in the expandable retrieved
+passages; there is no separate reference list below the answer.
 
 ## Team members
 

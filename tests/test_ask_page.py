@@ -34,7 +34,7 @@ class AskPageTests(unittest.TestCase):
         self.assertEqual(self.app.text_input[0].value, question)
         self.assertEqual(self.app.query_params["q"], question)
         self.assertEqual(self.app.session_state["ask_result"]["question"], question)
-        self.assertIn(f"Answer for: {question} [S1]", [m.value for m in self.app.markdown])
+        self.assertIn(f"Answer for: {question} [1, p. 1]", [m.value for m in self.app.markdown])
 
     def test_consecutive_submissions_use_the_latest_question(self):
         self.app.run()
