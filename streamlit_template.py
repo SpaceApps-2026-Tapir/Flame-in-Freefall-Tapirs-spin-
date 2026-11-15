@@ -352,8 +352,9 @@ def show_answer(last):
         alert("info", escape(last["note"]), label="Note")
     if last["passages"]:
         st.markdown("**Retrieved passages** (open one to read the evidence)")
-        for i, p in enumerate(last["passages"], 1):
-            with st.expander(f"[{labels[i - 1]}] {p['title']}, PDF page {p['page']}"):
+        for index in sorted(labels, key=labels.get):
+            p = last["passages"][index]
+            with st.expander(f"[{labels[index]}] {p['title']}, PDF page {p['page']}"):
                 st.write(p["text"])
                 source = safe_http_url(p.get("source_page_url") or p.get("pdf_url"))
                 if source:
