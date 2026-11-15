@@ -41,7 +41,8 @@ REGION = dict(o2=(PRESETS[MOON]["o2"], PRESETS["Exploration atmosphere"]["o2"]),
 
 OUTCOME_GROUPS = {
     "extinction": "Flame went out", "extinguished": "Flame went out", "blowoff": "Flame went out",
-    "spread": "Kept burning", "burned_entire_sample": "Kept burning", "completion": "Kept burning",
+    # FLEX "completion" is NASA's own label with an unconfirmed meaning (some have an extinction diameter)
+    "spread": "Kept burning", "burned_entire_sample": "Kept burning", "completion": "Other",
     "disruption": "Droplet broke apart", "no_ignition": "Did not ignite",
     "smoke_measured": "Smoke measured", "see_notes": "Other", "not_reported": "Other",
 }
@@ -271,10 +272,12 @@ def _camera(cam):
 
 
 def _colors(values):
-    cats = sorted(pd.Series(values).astype(str).unique())
-    keep = cats[:len(PALETTE)]
+    # The largest groups get the colours (in name order, so a colour stays with its group); the rest are grey "Other".
+    s = pd.Series(values).astype(str)
+    cats = [c for c in s.value_counts().index if c != "Other"]
+    keep = sorted(cats[:len(PALETTE)])
     mapping = {c: PALETTE[i] for i, c in enumerate(keep)}
-    folded = pd.Series(values).astype(str).where(pd.Series(values).astype(str).isin(keep), "Other")
+    folded = s.where(s.isin(keep), "Other")
     mapping["Other"] = OTHER
     return folded, mapping
 
