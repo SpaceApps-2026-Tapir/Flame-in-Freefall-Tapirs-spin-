@@ -158,3 +158,12 @@ If you see `No module named 'evidence'`, check step 3. If the error mentions
 | `uv run python -c "print('Hello from uv')"` | Run Python in the project's environment. |
 
 With `uv run`, you do not need to activate the environment manually. Track `pyproject.toml` and `uv.lock` in Git, and add `.venv/` to `.gitignore`. See the [official project guide](https://docs.astral.sh/uv/guides/projects/) for more details.
+
+## License
+
+The original code and documentation in this repository are licensed under the
+MIT License. See [LICENSE](LICENSE).
+
+NASA datasets, reports and PDFs remain subject to their own terms. This license
+does not relicense third-party data or grant rights to NASA names, logos or
+trademarks. This project is not affiliated with or endorsed by NASA.
