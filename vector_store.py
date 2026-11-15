@@ -66,6 +66,36 @@ def build_index(chunks, path=STORE, embedding_function=None):
     # Keep previous snapshots so readers already using them can finish safely.
 
 
+def index_inventory(path=STORE):
+    """Return one row per PDF in the active index, with its passage count."""
+    pointer = Path(path) / "active.json"
+    if not pointer.exists():
+        return []
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(path))
+    name = json.loads(pointer.read_text(encoding="utf-8"))["collection"]
+    collection = client.get_collection(name)
+    metadata_rows = collection.get(include=["metadatas"]).get("metadatas") or []
+    documents = {}
+    for metadata in metadata_rows:
+        metadata = metadata or {}
+        key = metadata.get("document_id") or metadata.get("title")
+        if not key:
+            continue
+        document = documents.setdefault(key, {
+            "document_id": key,
+            "title": metadata.get("title") or "Untitled PDF",
+            "experiment": metadata.get("experiment") or "",
+            "url": metadata.get("source_page_url") or metadata.get("pdf_url") or "",
+            "passages": 0,
+        })
+        if not document["url"]:
+            document["url"] = metadata.get("source_page_url") or metadata.get("pdf_url") or ""
+        document["passages"] += 1
+    return sorted(documents.values(), key=lambda row: (row["title"].casefold(), row["document_id"]))
+
+
 def search(question, limit=5, path=STORE, embedding_function=None, max_distance=None):
     """Return cosine nearest neighbours; distance is not confidence or proof."""
     pointer = path / "active.json"
@@ -85,7 +115,12 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
     content_query = re.sub(r"\b(?:what|which|were|was|the|in|experiment|experiments|cite|supporting|passages)\b",
                            " ", content_query, flags=re.I)
     content_query = " ".join(content_query.split()).strip(" ?.,") or question
-    result = collection.query(query_texts=[content_query], n_results=min(40, collection.count()),
+    # Keep experiment context for semantic search. Metadata filtering alone does
+    # not tell the embedding model what "objectives of" refers to.
+    semantic_query = question
+    if "SAME-R" in experiments:
+        semantic_query += " Smoke Aerosol Measurement Experiment Re-flight SAMER SAME-2"
+    result = collection.query(query_texts=[semantic_query], n_results=min(40, collection.count()),
                               **query_options, include=["documents", "metadatas", "distances"])
     # Combine semantic ranking with lexical evidence. Read text already in Chroma;
     # this requires no new embeddings or PDF downloads.

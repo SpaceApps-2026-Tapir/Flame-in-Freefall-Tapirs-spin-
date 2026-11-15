@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    image: flame-in-freefall:latest
+    container_name: flame-in-freefall
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    # Claves de API (Claude, etc.) en un archivo .env que NO se sube a git
+    env_file:
+      - path: .env
+        required: false
+    # Recarga en caliente durante desarrollo: descomentar para montar el código
+    # volumes:
+    #   - ./:/app
+    #   - /app/.venv

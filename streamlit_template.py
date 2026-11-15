@@ -12,6 +12,11 @@ import streamlit as st
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
 from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
+from references import dataset_reference, references_for
+from security import csv_bytes, safe_http_url, safe_model_markdown, validate_question
+from vector_store import index_inventory
+from guide import route
+from story import hero, overview
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -116,22 +121,8 @@ def home():
     st.markdown("<div class='title'>Flame in Freefall</div>"
                 "<div class='subtitle'>The Fire Safety Evidence Atlas</div>", unsafe_allow_html=True)
 
-    scenario_links = [link(name.replace(" (challenge brief)", ""),
-                           f"{s['o2']:g}% O₂ · {s['kpa'] / 6.895:.1f} psi",
-                           hint=f"{s['o2']:g}% oxygen at {s['kpa']:g} kPa ({s['kpa'] / 6.895:.1f} psi), "
-                                f"{s['gravity']} gravity. Source: {s['source']}",
-                           page="scenario", scenario=name)
-                      for name, s in PRESETS.items()]
-
-    pillar_links = [
-        link("Prevention", f"BASS · BASS-II · {n.get('BASS', 0) + n.get('BASS-II', 0)} tests",
-             hint=tip("prevention"), page="scenario", pillar="prevention"),
-        link("Detection", f"SAME · SAME-R · {n.get('SAME', 0) + n.get('SAME-R', 0)} tests",
-             hint=tip("detection"), page="scenario", pillar="detection"),
-        link("Suppression", f"FLEX · {n.get('FLEX', 0)} tests",
-             hint=tip("suppression"), page="scenario", pillar="suppression"),
-    ]
     st.markdown(f"<div class='emblem'>{EMBLEM}</div>", unsafe_allow_html=True)
+    hero(df)  # the theme that ties the page together (story.py)
 
     # search bar: one question box + blue button; it opens the Ask page with the answer
     _, c, _ = st.columns([0.6, 3, 0.6])
@@ -142,14 +133,17 @@ def home():
                               label_visibility="collapsed")
             go = s2.form_submit_button("Search")
         if go:
-            st.query_params.from_dict({"page": "ask", "q": q.strip()} if q.strip() else {"page": "ask"})
+            # guide.py: pattern questions open a chart, explanation questions open Ask the evidence
+            dest = route(q) if q.strip() else {"page": "ask"}
+            st.query_params.from_dict({k: v for k, v in dest.items() if k != "why"})
             st.rerun()
         st.markdown("<div class='langs'><a href='?page=scenario' target='_self'>Scenario report</a> · "
+                    "<a href='?page=visual' target='_self'>Explore visually</a> · "
                     f"<a href='?page=explore' target='_self'>Filter all {len(df)} tests</a> · "
                     "<a href='?page=about' target='_self'>About this atlas</a></div>", unsafe_allow_html=True)
 
-    st.markdown("<nav class='portal-grid' aria-label='Fire safety topics and mission scenarios'>"
-                + "".join(pillar_links + scenario_links) + "</nav>", unsafe_allow_html=True)
+    # simulator -> map of pillars x scenarios (replaces the portal cards) -> finding -> next tests -> paths (story.py)
+    overview(df)
 
     st.markdown(f"<div class='note'>{len(df)} microgravity fire tests from NASA Physical Sciences Informatics · "
                 "Built for NASA Space Apps Challenge 2026 · Not affiliated with or endorsed by NASA</div>",
@@ -157,7 +151,8 @@ def home():
 
 
 # ====================================================================== shared page frame (every page except home)
-PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("explore", "Data explorer"), ("about", "About")]
+PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("visual", "Explore visually"),
+         ("explore", "Data explorer"), ("about", "About")]
 PAGE_CSS = """
 <style>
   [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
@@ -177,6 +172,15 @@ PAGE_CSS = """
   .infobox table {width: 100%; border-collapse: collapse;}
   .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
   .infobox th {text-align: left; vertical-align: top; width: 45%;}
+  .index-table {width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; font-size: .92rem;}
+  .index-table th, .index-table td {padding: .42rem .55rem; border-bottom: 1px solid var(--atlas-divider); text-align: left;}
+  .index-table th {color: var(--atlas-muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em;}
+  .index-table .num {text-align: right; font-variant-numeric: tabular-nums;}
+  .index-table tr.total td {font-weight: 700; border-top: 2px solid var(--atlas-border);}
+  .index-table a {text-decoration: none;}
+  .index-table a:hover {text-decoration: underline;}
+  .ref-item {margin: .65rem 0; line-height: 1.5;}
+  .ref-item .ref-meta, .ref-item .ref-authors {color: var(--atlas-muted); font-size: .85rem; margin-top: .1rem;}
   .hatnote {font-style: italic; color: var(--atlas-muted); margin-bottom: .6rem;}
 </style>"""
 
@@ -248,9 +252,9 @@ EXAMPLES = ["What fabrics were tested in BASS?",
 def secret(name):
     """Environment variable first, then .streamlit/secrets.toml (local) or the Secrets box (Streamlit Cloud)."""
     if os.environ.get(name):
-        return os.environ[name]
+        return os.environ[name].strip()
     try:
-        return st.secrets.get(name, "")
+        return str(st.secrets.get(name, "")).strip()
     except Exception:  # no secrets file
         return ""
 
@@ -261,12 +265,18 @@ def records(frame, columns):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
+    # Experiment-context retrieval v2; changing this wrapper invalidates old results.
     return retrieve(question)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_index_inventory():
+    return index_inventory()
 
 
 # Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_answer(question, passages, context, model, _api_key):
+def cached_answer(question, passages, context, model, _api_key, pipeline_version):
     return answer(question, passages, context, _api_key, model)
 
 
@@ -284,6 +294,10 @@ def scenario_context(preset, pillar, o2_tol, kpa_tol, w_o2, w_kpa):
 
 def run_question(question, context):
     result = {"question": question, "context": context, "passages": [], "text": None, "note": None, "error": None}
+    question_error = validate_question(question)
+    if question_error:
+        result["error"] = question_error
+        return result
     try:
         with st.spinner("Searching NASA documents…"):
             result["passages"] = cached_retrieve(question)
@@ -296,7 +310,7 @@ def run_question(question, context):
                               "to get a written answer.")
             return result
         with st.spinner("Reading the evidence and writing an answer…"):
-            result["text"] = cached_answer(question, result["passages"], context, model, api_key)
+            result["text"] = cached_answer(question, result["passages"], context, model, api_key, "structured-v1")
     except (ValueError, RuntimeError, OSError) as exc:
         result["error"] = str(exc)
     return result
@@ -313,28 +327,32 @@ def context_line(context):
 
 
 def show_answer(last):
+    from citations import ieee_citations
+    display_text, _, labels = ieee_citations(last["text"], last["passages"])
     if last["error"]:
         alert("bad", escape(last["error"]), label="Error")
     elif last["text"] in (NO_EVIDENCE, NO_PASSAGES):
-        alert("info", "<b>The NASA documents in this atlas do not answer this question.</b> The atlas only knows "
-                      "what NASA's microgravity fire reports say, so it cannot answer general questions "
-                      "(like <i>what is fire?</i>) or compare things the reports never compare.<br>"
-                      "Try naming an experiment, a material or a condition, for example: <i>Which materials "
-                      "had the highest flame spread rate in BASS-II?</i> or <i>How did oxygen concentration "
-                      "change flame spread over PMMA?</i>", label="No answer")
+        alert("info", "<b>The retrieved passages do not provide enough evidence to answer this question.</b> "
+                      "Other pages or documents may contain the answer. Try one of the suggested questions below.",
+                      label="No answer")
+        return
     elif last["text"]:
         with st.container(border=True):
-            st.markdown(last["text"])
+            st.markdown(safe_model_markdown(display_text))
             st.caption("AI-generated from the sources below. Check them: a citation does not guarantee the claim is right.")
     if last["note"]:
         alert("info", escape(last["note"]), label="Note")
     if last["passages"]:
-        st.markdown("**Sources** (open one to read the passage)")
-        for i, p in enumerate(last["passages"], 1):
-            with st.expander(f"[S{i}] {p['title']}, PDF page {p['page']}"):
+        st.markdown("**Retrieved passages** (open one to read the evidence)")
+        for index in sorted(labels, key=labels.get):
+            p = last["passages"][index]
+            with st.expander(f"[{labels[index]}] {p['title']}, PDF page {p['page']}"):
                 st.write(p["text"])
-                source = p.get("source_page_url") or p["pdf_url"]
-                st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+                source = safe_http_url(p.get("source_page_url") or p.get("pdf_url"))
+                if source:
+                    st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+                else:
+                    st.caption("Source link unavailable: the PDF URL is not a valid http(s) address.")
     st.caption(context_line(last["context"]))
 
 
@@ -342,6 +360,12 @@ def select_example(question):
     """Update the question before Streamlit renders the form again."""
     st.session_state["ask_question"] = question
     st.query_params["q"] = question
+
+
+def suggested_questions():
+    st.markdown("**Not sure what to ask? Try one of these:**")
+    for i, example in enumerate(EXAMPLES):
+        st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
 
 
 def ask_page():
@@ -378,15 +402,78 @@ def ask_page():
         st.session_state["ask_result"] = last
 
     if not question or last is None or last["question"] != question:
-        st.markdown("**Not sure what to ask? Try one of these:**")
-        for i, example in enumerate(EXAMPLES):
-            st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
+        suggested_questions()
         return
 
     show_answer(last)
+    if not last["error"] and last["text"] in (NO_EVIDENCE, NO_PASSAGES):
+        suggested_questions()
     if preset:
         st.markdown(f"<a href='{carry(page='scenario')}' target='_self'>See the full scenario report for "
                     f"{escape(preset)} →</a>", unsafe_allow_html=True)
+
+
+def _ieee_citation_html(ref):
+    """Escape an IEEE citation and make its DOI or source URL clickable."""
+    citation = escape(ref.get("citation", ""))
+    target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
+              else safe_http_url(ref.get("url")))
+    if not target:
+        return citation
+    url = escape(target, quote=True)
+    label = escape(target)
+    return citation.replace(
+        label,
+        f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{label}</a>",
+        1,
+    )
+
+
+def reference_line(ref, show_citation=False, number=None):
+    """One reference: compact metadata, or the full IEEE citation on the About page."""
+    prefix = f"[{number}] " if number is not None else ""
+    title = escape(ref.get("title", "Untitled reference"))
+    year = f" ({escape(str(ref['year']))})" if ref.get("year") else ""
+    ident = f" <code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else ""
+    url = safe_http_url(ref.get("url"))
+    if ref.get("doi"):
+        doi = escape(ref["doi"], quote=True)
+        link = (f"<a href='https://doi.org/{doi}' target='_blank' rel='noopener noreferrer'>"
+                f"DOI {doi}</a>")
+    elif url:
+        link = (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer'>"
+                "source</a>")
+    else:
+        link = "no link recorded"
+    role = f" · {escape(ref['role'])}" if ref.get("role") else ""
+    authors = (f"<div class='ref-authors'>{escape(ref['authors'])}</div>"
+               if ref.get("authors") else "")
+    if show_citation and ref.get("citation"):
+        meta = " · ".join(part for part in [
+            f"<code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else "",
+            escape(ref["role"]) if ref.get("role") else "",
+            f"License: {escape(ref['license'])}" if ref.get("license") else "",
+        ] if part)
+        meta = f"<div class='ref-meta'>{meta}</div>" if meta else ""
+        st.markdown(f"<div class='ref-item'>{prefix}{_ieee_citation_html(ref)}{meta}</div>",
+                    unsafe_allow_html=True)
+        return
+    st.markdown(f"<div class='ref-item'><b>{title}</b>{year}{ident} — {link}{role}{authors}</div>",
+                unsafe_allow_html=True)
+
+
+def render_references(experiment, show_citation=False, start=1):
+    """Render one experiment's references and return the next IEEE list number."""
+    refs = references_for(experiment)
+    if not refs:
+        st.caption("No references recorded for this experiment.")
+        return start
+    number = start
+    for ref in refs:
+        reference_line(ref, show_citation=show_citation,
+                       number=number if show_citation else None)
+        number += 1
+    return number
 
 
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
@@ -449,12 +536,20 @@ def test_details(r):
                    f"**{term('Suppressant', 'suppressant')}:** {escape(val(r.suppressant))}  \n"
                    f"**{term('Outcome', 'outcome')} (our category):** {term(r.outcome_category)}  \n"
                    f"**{term('Relevance', 'relevance')}:** {r.relevance:.2f}", unsafe_allow_html=True)
-        st.markdown(f"**Original NASA note:** {val(r.outcome_raw)}")
-        st.markdown(f"**Test conditions as logged:** {val(r.condition_detail)}")
+        st.markdown(f"**Original NASA note:** {escape(val(r.outcome_raw))}")
+        st.markdown(f"**Test conditions as logged:** {escape(val(r.condition_detail))}")
         if not pd.isna(r.assumed_fields):
             alert("info", f"{term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
                           "(not logged per test).", label="Note")
-        st.caption(f"Source: {r.source_file} · {r.source_location}")
+        source = f"Source: {escape(str(r.source_file))} · {escape(str(r.source_location))}"
+        ref = dataset_reference(r.experiment)
+        if ref:
+            label = escape(ref.get("identifier") or "PSI dataset")
+            target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
+                      else safe_http_url(ref.get("url")))
+            if target:
+                source += f" · Dataset [{label}]({target})"
+        st.caption(source)
 
 
 def gap_banners(gaps, o2_tol, kpa_tol):
@@ -475,10 +570,12 @@ def gap_banners(gaps, o2_tol, kpa_tol):
     for pillar_name, g in gaps.groupby("pillar", sort=False):
         st.markdown(f"**{term(pillar_name.capitalize(), pillar_name)}**", unsafe_allow_html=True)
         for r in g.itertuples():
-            msg = (f"<b>{term(r.material_class)}</b>: {r.tests_near} of {r.tests_total} tests within {tol}. "
-                   f"Closest: {r.closest_test} at {r.closest_o2_pct:g}% {o2}, {r.closest_kpa:g} {kpa} "
-                   f"(<b>{r.closest_d_o2:+.1f} {pp} O₂, {r.closest_d_kpa:+.1f} kPa</b> from the scenario). "
-                   f"Tested: {r.o2_range_tested} O₂, {r.kpa_range_tested}, gravity: {term(r.gravity_tested)}.")
+            msg = (f"<b>{term(r.material_class)}</b>: {int(r.tests_near)} of {int(r.tests_total)} tests "
+                   f"within {tol}. Closest: {escape(str(r.closest_test))} at {r.closest_o2_pct:g}% {o2}, "
+                   f"{r.closest_kpa:g} {kpa} (<b>{r.closest_d_o2:+.1f} {pp} O₂, "
+                   f"{r.closest_d_kpa:+.1f} kPa</b> from the scenario). "
+                   f"Tested: {escape(str(r.o2_range_tested))} O₂, {escape(str(r.kpa_range_tested))}, "
+                   f"gravity: {term(r.gravity_tested)}.")
             if r.verdict == "gap":
                 over_o2 = max(0.0, abs(r.closest_d_o2) - o2_tol)
                 over_kpa = max(0.0, abs(r.closest_d_kpa) - kpa_tol)
@@ -535,7 +632,7 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
 def key_finding(gaps, preset, p, o2_tol, kpa_tol):
     """One plain-language summary of the gap table: which fuel groups have tests near the scenario, which do not."""
     def names(rows):
-        return ", ".join(f"{term(r.material_class)} ({r.pillar})" for r in rows)
+        return ", ".join(f"{term(r.material_class)} ({escape(str(r.pillar))})" for r in rows)
 
     near = [r for r in gaps.itertuples() if r.status != "GAP"]
     far = [r for r in gaps.itertuples() if r.status == "GAP"]
@@ -572,10 +669,10 @@ def scenario_page():
     if p is None:
         alert("info", "<b>Choose a mission scenario above</b> (ISS cabin, Moon base, exploration atmosphere, "
                       "spacesuit or Mars habitat). This report then shows:<br>"
-                      "1. a <b>key finding</b> in one sentence,<br>"
-                      "2. <b>where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
-                      "3. the <b>closest NASA tests</b>, with the original NASA notes,<br>"
-                      "4. a <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
+                      "1. A <b>key finding</b> in one sentence,<br>"
+                      "2. <b>Where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
+                      "3. The <b>closest NASA tests</b>, with the original NASA notes,<br>"
+                      "4. A <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
         h2("Test conditions map")
         conditions_map(pts, None, None, None, None)
         return
@@ -630,6 +727,66 @@ def scenario_page():
             st.rerun()
 
 
+INDEX_TOPIC = {"BASS": "Prevention", "BASS-II": "Prevention", "FLEX": "Suppression",
+               "SAME": "Detection", "SAME-R": "Detection"}
+INDEX_TOPIC_ORDER = ("Prevention", "Detection", "Suppression", "Background / cross-cutting")
+
+
+def index_tables(inventory):
+    """Group the active PDF index by atlas topic, plus one row per PDF."""
+    rows = []
+    for item in inventory:
+        topic = INDEX_TOPIC.get(item.get("experiment", ""), INDEX_TOPIC_ORDER[-1])
+        rows.append({"PDF": item.get("title", "Untitled PDF"), "Topic": topic,
+                     "Embeddings": item.get("passages", 0), "URL": item.get("url", "")})
+    grouped = {}
+    for row in rows:
+        bucket = grouped.setdefault(row["Topic"], {"Topic": row["Topic"], "PDFs": 0, "Embeddings": 0})
+        bucket["PDFs"] += 1
+        bucket["Embeddings"] += row["Embeddings"]
+
+    def topic_order(topic):
+        return INDEX_TOPIC_ORDER.index(topic) if topic in INDEX_TOPIC_ORDER else len(INDEX_TOPIC_ORDER)
+
+    summary = sorted(grouped.values(), key=lambda row: (topic_order(row["Topic"]), row["Topic"]))
+    summary.append({"Topic": "Total", "PDFs": len(rows),
+                    "Embeddings": sum(row["Embeddings"] for row in rows)})
+    rows.sort(key=lambda row: (topic_order(row["Topic"]), row["PDF"].casefold()))
+    return summary, rows
+
+
+def index_summary_html(summary):
+    body = "".join(
+        f"<tr{' class=total' if row['Topic'] == 'Total' else ''}>"
+        f"<td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['PDFs']:,}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in summary)
+    return ("<table class='index-table' aria-label='PDFs and embeddings by topic'>"
+            "<thead><tr><th scope='col'>Topic</th><th scope='col' class='num'>PDFs</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
+
+
+def index_pdf_html(rows):
+    def pdf_link(row):
+        title = escape(row["PDF"])
+        url = safe_http_url(row.get("URL", ""))
+        if not url:
+            return title
+        return (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer' "
+                f"title='Open PDF in a new tab'>{title} ↗</a>")
+
+    body = "".join(
+        f"<tr><td>{pdf_link(row)}</td><td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in rows)
+    return ("<table class='index-table' aria-label='Indexed PDFs, topics and embeddings'>"
+            "<thead><tr><th scope='col'>PDF</th><th scope='col'>Topic</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
+
+
 def about_page():
     page_header("about", "About this atlas",
                 "What Flame in Freefall does, how to read it, and where its data comes from.")
@@ -656,7 +813,6 @@ def about_page():
             f"**{term('detection')}** ({term('SAME')}, {term('SAME-R')}) and **{term('suppression')}** ({term('FLEX')}). "
             "Words with a dotted underline show a short definition when you hover over them.",
             unsafe_allow_html=True)
-        placeholder("TODO [Pitch]: 2-3 sentence summary + key finding")
 
         h2("How to use it")
         st.markdown(
@@ -689,44 +845,64 @@ def about_page():
             "1. A local search (no AI) finds the 5 passages in NASA's PDF reports that best match the question.\n"
             "2. A language model hosted by Groq writes an answer from those passages only. If you chose a "
             "scenario, it also gets the closest tests and gaps from the data table.\n"
-            "3. Every claim must cite a passage, [S1] to [S5]. Answers that cite anything else are rejected, and if "
+            "3. Claims cite retrieved sources, displayed as IEEE-style numbered references with PDF page locators. Invalid source IDs are rejected, and if "
             "the passages do not cover the question, it says so.\n\n"
             "Numbers come from the passages or the data table, never from the model's memory. "
             "Check the passages: a citation does not prove the claim is right.")
 
+        h2("NASA documents indexed")
+        inventory = cached_index_inventory()
+        if not inventory:
+            st.caption("No PDF documents are available for search yet.")
+        else:
+            summary, rows = index_tables(inventory)
+            st.markdown(f"The local search index contains **{len(rows)} PDFs** converted into "
+                        f"**{summary[-1]['Embeddings']:,} embedded passages**. Each passage is a 100-word "
+                        "overlapping chunk; the table groups them by the atlas topic they support.")
+            st.markdown(index_summary_html(summary), unsafe_allow_html=True)
+            with st.expander("See the PDFs in the index"):
+                st.markdown(index_pdf_html(rows), unsafe_allow_html=True)
+                st.caption("Click a PDF title to open it in a new tab.")
+            st.caption("PDFs without a single experiment are grouped as background / cross-cutting.")
+
         h2("Experiments")
-        for name, pillar_label, desc in [
+        for name, pillar_label, desc, experiments in [
             ("BASS / BASS-II", "Prevention",
              f"{term('BASS')} / {term('BASS-II')}: how solid materials ({term('PMMA', 'pmma')} plastic, fabric such as "
              f"{term('Nomex', 'nomex')}, wax) ignite, spread and go out in low-speed {term('airflow')}. "
-             f"Run in the {term('MSG', 'msg')}."),
+             f"Run in the {term('MSG', 'msg')}.", ["BASS", "BASS-II"]),
             ("FLEX", "Suppression",
              f"{term('FLEX')}: {term('fuel droplets', 'liquid fuel droplet')} burned in different {term('O₂', 'o2')}, "
              f"pressure and {term('suppressant')} (CO₂, helium) mixtures. Run in the {term('CIR', 'cir')} with the "
-             f"{term('MDCA', 'mdca')}."),
+             f"{term('MDCA', 'mdca')}.", ["FLEX"]),
             ("SAME / SAME-R", "Detection",
              f"{term('SAME')} / {term('SAME-R')}: smoke particle sizes from heated spacecraft materials and how "
-             f"smoke detectors respond. Includes a {term('reference aerosol')}."),
+             f"smoke detectors respond. Includes a {term('reference aerosol')}.", ["SAME", "SAME-R"]),
         ]:
             with st.expander(f"{name}: {pillar_label}"):
                 st.markdown(desc, unsafe_allow_html=True)
-                placeholder("TODO: summary card, key findings with page citations, small chart")
-
-        h2("Applications on Earth")
-        placeholder("TODO [Pitch]: NASA spinoffs: firefighter air tanks, smoke detector, protective clothing")
+                for experiment in experiments:
+                    if len(experiments) > 1:
+                        st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
+                    render_references(experiment)
 
         h2("Methodology and use of AI")
         st.markdown(
-            f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102, "
-            "built with `build_master.py`.\n"
+            f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102.\n"
             f"- **Ranking:** distance on O₂ and pressure ({term('relevance')}, {term('weights', 'weight')} and "
             f"{term('tolerances', 'tolerance')} in the scenario report).\n"
             f"- **{term('Outcome', 'outcome')} categories** for BASS/BASS-II are our reading of crew notes; "
-            "the original note is always shown.\n"
-            "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
+            "the original note is always shown.", unsafe_allow_html=True)
 
         h2("References")
-        placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
+        st.markdown("Datasets and reports used by this atlas, in IEEE style. Dataset DOIs resolve to the canonical "
+                    "NASA PSI landing page, where the experimental tables and files are published. "
+                    "Licenses are shown for each source.")
+        number = 1
+        for experiment in ["BASS", "BASS-II", "FLEX", "SAME", "SAME-R"]:
+            if references_for(experiment):
+                st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
+                number = render_references(experiment, show_citation=True, start=number)
 
 
 # ====================================================================== DATA EXPLORER (pick columns → filter → results)
@@ -810,7 +986,7 @@ def explore():
         return
     st.dataframe(res, hide_index=True, width="stretch", column_config={
         c: st.column_config.Column(LABELS[c], help=tip(COLUMN_HELP.get(c, c))) for c in res.columns})
-    st.download_button("Download these tests (.csv)", res.to_csv(index=False).encode("utf-8"),
+    st.download_button("Download these tests (.csv)", csv_bytes(res),
                        file_name="flame_in_freefall_tests.csv", mime="text/csv")
 
 
@@ -821,6 +997,12 @@ if page == "article":  # old links: the article page was split into Ask and Scen
     st.query_params["page"] = page
 if page in ("ask", "scenario", "explore", "about"):
     {"ask": ask_page, "scenario": scenario_page, "explore": explore, "about": about_page}[page]()
+    site_footer()
+elif page == "visual":
+    from visual_lab import page as visual_page  # loaded lazily: scikit-learn only on this page
+    page_header("visual", "Explore the data visually",
+                "Ask a question and the assistant picks the chart, or pick one yourself.")
+    visual_page(header=False)
     site_footer()
 else:
     home()
