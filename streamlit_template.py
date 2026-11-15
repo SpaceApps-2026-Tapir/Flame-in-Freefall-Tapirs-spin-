@@ -1,5 +1,7 @@
 from html import escape
+import json
 from pathlib import Path
+import os
 from urllib.parse import quote
 
 import pandas as pd
@@ -9,6 +11,7 @@ import streamlit as st
 
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
+from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -35,6 +38,8 @@ BASE_CSS = f"""
   .home-link:focus-visible {{outline: 2px solid var(--atlas-link); outline-offset: 3px;}}
   .placeholder {{border: 1px dashed var(--atlas-border); background: var(--atlas-placeholder); color: var(--atlas-note); padding: 1.2rem; text-align: center;}}
   footer {{visibility: hidden;}}
+  /* Reserve a row below form inputs for Streamlit's absolutely positioned Enter hint. */
+  [data-testid="stForm"] [data-testid="stTextInput"] {{padding-bottom: 1.5rem;}}
   abbr.gl {{text-decoration: underline dotted; text-underline-offset: 3px; cursor: help;}}
   .alert {{border-radius: .35rem; border-left: 5px solid; padding: .7rem 1rem; margin: .45rem 0; line-height: 1.55;}}
   .alert.ok {{background: light-dark(#e8f5e9, #123124); color: light-dark(#14532d, #c0f5d5); border-color: light-dark(#0ca30c, #4ade80);}}
@@ -115,32 +120,33 @@ def home():
                            f"{s['o2']:g}% O₂ · {s['kpa'] / 6.895:.1f} psi",
                            hint=f"{s['o2']:g}% oxygen at {s['kpa']:g} kPa ({s['kpa'] / 6.895:.1f} psi), "
                                 f"{s['gravity']} gravity. Source: {s['source']}",
-                           page="article", scenario=name)
+                           page="scenario", scenario=name)
                       for name, s in PRESETS.items()]
 
     pillar_links = [
         link("Prevention", f"BASS · BASS-II · {n.get('BASS', 0) + n.get('BASS-II', 0)} tests",
-             hint=tip("prevention"), page="article", pillar="prevention"),
+             hint=tip("prevention"), page="scenario", pillar="prevention"),
         link("Detection", f"SAME · SAME-R · {n.get('SAME', 0) + n.get('SAME-R', 0)} tests",
-             hint=tip("detection"), page="article", pillar="detection"),
+             hint=tip("detection"), page="scenario", pillar="detection"),
         link("Suppression", f"FLEX · {n.get('FLEX', 0)} tests",
-             hint=tip("suppression"), page="article", pillar="suppression"),
+             hint=tip("suppression"), page="scenario", pillar="suppression"),
     ]
     st.markdown(f"<div class='emblem'>{EMBLEM}</div>", unsafe_allow_html=True)
 
-    # search bar: one question box + blue button (the scenario is chosen in the article's sidebar)
+    # search bar: one question box + blue button; it opens the Ask page with the answer
     _, c, _ = st.columns([0.6, 3, 0.6])
     with c:
         with st.form("search", border=False):
-            s1, s2 = st.columns([3, 0.55], vertical_alignment="bottom")
+            s1, s2 = st.columns([3, 0.55], vertical_alignment="top")
             q = s1.text_input("Question", placeholder="Ask the evidence, e.g. Do flames go out on their own at 30% oxygen?",
                               label_visibility="collapsed")
             go = s2.form_submit_button("Search")
         if go:
-            st.query_params.update({"page": "article", "q": q})
+            st.query_params.from_dict({"page": "ask", "q": q.strip()} if q.strip() else {"page": "ask"})
             st.rerun()
-        st.markdown("<div class='langs'><a href='?page=explore' target='_self'>Or filter all "
-                    f"{len(df)} tests in the data explorer →</a></div>", unsafe_allow_html=True)
+        st.markdown("<div class='langs'><a href='?page=scenario' target='_self'>Scenario report</a> · "
+                    f"<a href='?page=explore' target='_self'>Filter all {len(df)} tests</a> · "
+                    "<a href='?page=about' target='_self'>About this atlas</a></div>", unsafe_allow_html=True)
 
     st.markdown("<nav class='portal-grid' aria-label='Fire safety topics and mission scenarios'>"
                 + "".join(pillar_links + scenario_links) + "</nav>", unsafe_allow_html=True)
@@ -150,21 +156,237 @@ def home():
                 unsafe_allow_html=True)
 
 
-# ====================================================================== ARTICLE (Wikipedia-style page)
-SECTIONS = [
-    ("overview", "Overview"), ("scenario", "Mission scenario"), ("evidence", "Closest NASA evidence"),
-    ("gaps", "Evidence gaps"), ("map", "Test conditions map"), ("experiments", "Experiments"),
-    ("ask", "Ask the evidence"), ("earth", "Applications on Earth"),
-    ("method", "Methodology and use of AI"), ("references", "References"),
-]
+# ====================================================================== shared page frame (every page except home)
+PAGES = [("ask", "Ask the evidence"), ("scenario", "Scenario report"), ("explore", "Data explorer"), ("about", "About")]
+PAGE_CSS = """
+<style>
+  [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
+  .block-container {max-width: 1150px; padding-top: 1.5rem;}
+  h1 {font-size: 2.2rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .2rem; margin-bottom: .2rem;}
+  h2 {font-size: 1.6rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .15rem; margin-top: 1.6rem;}
+  .tagline {color: var(--atlas-muted); font-size: .95rem; margin-bottom: 1rem;}
+  .topnav {display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .4rem 1.5rem;
+           border-bottom: 1px solid var(--atlas-divider); padding-bottom: .5rem; margin-bottom: 1.4rem;}
+  .topnav nav {display: flex; flex-wrap: wrap; gap: .3rem 1.3rem; font-size: .95rem;}
+  .topnav nav a {text-decoration: none;}
+  .topnav nav b {color: var(--atlas-text); border-bottom: 2px solid var(--atlas-link);}
+  .facts {font-size: 1rem; margin: .2rem 0 .6rem;}
+  .facts .src {color: var(--atlas-muted); font-size: .88rem;}
+  .infobox {border: 1px solid var(--atlas-border); background: var(--atlas-panel); color: var(--atlas-text); padding: .6rem .8rem; font-size: .88rem;}
+  .infobox .ib-title {font-weight: 700; text-align: center; font-size: 1rem; padding-bottom: .4rem; display: block;}
+  .infobox table {width: 100%; border-collapse: collapse;}
+  .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
+  .infobox th {text-align: left; vertical-align: top; width: 45%;}
+  .hatnote {font-style: italic; color: var(--atlas-muted); margin-bottom: .6rem;}
+</style>"""
+
+PILLARS = ["All", "prevention", "detection", "suppression"]
+PILLAR_LABELS = {"All": "All pillars", "prevention": "Prevention: stop fires starting",
+                 "detection": "Detection: spot fires early", "suppression": "Suppression: put fires out"}
+O2_TOL, KPA_TOL = 3.0, 10.0  # default tolerance box: ±3 percentage points O₂, ±10 kPa
 
 
-def heading(anchor):
-    st.markdown(f'<h2 id="{anchor}">{dict(SECTIONS)[anchor]}</h2>', unsafe_allow_html=True)
+def carry(**params):
+    """Link that keeps the chosen scenario and pillar when moving between pages."""
+    keep = {k: qp[k] for k in ("scenario", "pillar") if qp.get(k)}
+    keep.update(params)
+    return "?" + "&".join(f"{k}={quote(str(v))}" for k, v in keep.items())
+
+
+def set_param(name, value):
+    if value:
+        st.query_params[name] = value
+    else:
+        st.query_params.pop(name, None)
+
+
+def qfloat(name, default):
+    try:
+        return float(qp.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def pick_index(options, value):
+    return options.index(value) if value in options else None
+
+
+def page_header(current, title, tagline):
+    st.markdown(PAGE_CSS, unsafe_allow_html=True)
+    links = "".join(f"<b>{label}</b>" if key == current else f"<a href='{carry(page=key)}' target='_self'>{label}</a>"
+                    for key, label in PAGES)
+    st.markdown(f"<div class='topnav'><a href='?' target='_self' class='brand-link'>Flame in Freefall</a>"
+                f"<nav aria-label='Pages'>{links}</nav></div>", unsafe_allow_html=True)
+    st.markdown(f"<h1>{title}</h1><div class='tagline'>{tagline}</div>", unsafe_allow_html=True)
+
+
+def h2(text):
+    st.markdown(f"<h2>{text}</h2>", unsafe_allow_html=True)
 
 
 def placeholder(text):
     st.markdown(f'<div class="placeholder">{text}</div>', unsafe_allow_html=True)
+
+
+def site_footer():
+    st.markdown("<hr><div class='tagline'>Built for NASA Space Apps Challenge 2026, Flame in Freefall. "
+                "Data: NASA Physical Sciences Informatics. Not affiliated with or endorsed by NASA.</div>",
+                unsafe_allow_html=True)
+
+
+# ====================================================================== ASK THE EVIDENCE (RAG + Groq)
+# Only these columns go to the model, to keep each request small (Groq free tier: about 8,000 tokens per minute).
+LLM_TEST_COLUMNS = ["experiment", "test_id", "material", "material_class", "oxygen_pct", "pressure_kpa",
+                    "airflow_cms", "flow_direction", "gravity", "suppressant", "outcome_category", "relevance", "why"]
+LLM_GAP_COLUMNS = ["pillar", "material_class", "tests_total", "tests_near", "status", "closest_test",
+                   "closest_d_o2", "closest_d_kpa", "o2_range_tested", "kpa_range_tested", "gravity_gap"]
+EXAMPLES = ["What fabrics were tested in BASS?",
+            "How does airflow speed affect flame extinction of fabrics?",
+            "Which suppressants did FLEX test, and how did they affect the flames?"]
+
+
+def secret(name):
+    """Environment variable first, then .streamlit/secrets.toml (local) or the Secrets box (Streamlit Cloud)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        return st.secrets.get(name, "")
+    except Exception:  # no secrets file
+        return ""
+
+
+def records(frame, columns):
+    return json.loads(frame[columns].to_json(orient="records"))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_retrieve(question):
+    return retrieve(question)
+
+
+# Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_answer(question, passages, context, model, _api_key):
+    return answer(question, passages, context, _api_key, model)
+
+
+def scenario_context(preset, pillar, o2_tol, kpa_tol, w_o2, w_kpa):
+    """The same closest tests and gaps the scenario report shows, as data for the model."""
+    if preset is None:
+        return {"scenario": None}
+    pil = None if pillar == "All" else pillar
+    gaps = gap(df, preset, o2_tol=o2_tol, kpa_tol=kpa_tol)
+    return {"scenario": {"name": preset, **PRESETS[preset]}, "pillar": pillar,
+            "tolerance": {"o2_pp": o2_tol, "kpa": kpa_tol},
+            "ranked_tests": records(rank(df, preset, pillar=pil, n=5, w_o2=w_o2, w_kpa=w_kpa), LLM_TEST_COLUMNS),
+            "gaps": records(gaps if pil is None else gaps[gaps["pillar"] == pil], LLM_GAP_COLUMNS)}
+
+
+def run_question(question, context):
+    result = {"question": question, "context": context, "passages": [], "text": None, "note": None, "error": None}
+    try:
+        with st.spinner("Searching NASA documents…"):
+            result["passages"] = cached_retrieve(question)
+        if not result["passages"]:
+            result["note"] = "No NASA documents are indexed yet. Run python scripts/ingest_documents.py first."
+            return result
+        api_key, model = secret("GROQ_API_KEY"), secret("GROQ_MODEL")
+        if not api_key or not model:
+            result["note"] = ("Showing the matching passages only. Set GROQ_API_KEY and GROQ_MODEL "
+                              "to get a written answer.")
+            return result
+        with st.spinner("Reading the evidence and writing an answer…"):
+            result["text"] = cached_answer(question, result["passages"], context, model, api_key)
+    except (ValueError, RuntimeError, OSError) as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def context_line(context):
+    if context["scenario"] is None:
+        return ("Answered from NASA documents only. Choose a mission scenario above to also give it the closest "
+                "NASA tests and the evidence gaps for that scenario.")
+    tol = context["tolerance"]
+    return (f"Also given the 5 closest tests and the evidence gaps for {context['scenario']['name']} "
+            f"({PILLAR_LABELS[context['pillar']].split(':')[0].lower()}, tolerance ±{tol['o2_pp']:g} pp O₂ and "
+            f"±{tol['kpa']:g} kPa), computed from the data table as in the scenario report.")
+
+
+def show_answer(last):
+    if last["error"]:
+        alert("bad", escape(last["error"]), label="Error")
+    elif last["text"] in (NO_EVIDENCE, NO_PASSAGES):
+        alert("info", "<b>The NASA documents in this atlas do not answer this question.</b> The atlas only knows "
+                      "what NASA's microgravity fire reports say, so it cannot answer general questions "
+                      "(like <i>what is fire?</i>) or compare things the reports never compare.<br>"
+                      "Try naming an experiment, a material or a condition, for example: <i>Which materials "
+                      "had the highest flame spread rate in BASS-II?</i> or <i>How did oxygen concentration "
+                      "change flame spread over PMMA?</i>", label="No answer")
+    elif last["text"]:
+        with st.container(border=True):
+            st.markdown(last["text"])
+            st.caption("AI-generated from the sources below. Check them: a citation does not guarantee the claim is right.")
+    if last["note"]:
+        alert("info", escape(last["note"]), label="Note")
+    if last["passages"]:
+        st.markdown("**Sources** (open one to read the passage)")
+        for i, p in enumerate(last["passages"], 1):
+            with st.expander(f"[S{i}] {p['title']}, PDF page {p['page']}"):
+                st.write(p["text"])
+                source = p.get("source_page_url") or p["pdf_url"]
+                st.link_button("Open source PDF", source.split("#")[0] + f"#page={p['page']}")
+    st.caption(context_line(last["context"]))
+
+
+def select_example(question):
+    """Update the question before Streamlit renders the form again."""
+    st.session_state["ask_question"] = question
+    st.query_params["q"] = question
+
+
+def ask_page():
+    page_header("ask", "Ask the evidence",
+                "Answers come only from NASA documents, with citations. "
+                "If the documents do not cover your question, the assistant says so.")
+    presets = list(PRESETS)
+    # Seed shared links once; URL updates must not reset the question widget.
+    if "ask_question" not in st.session_state:
+        st.session_state["ask_question"] = qp.get("q", "")
+    with st.form("ask", border=False):
+        c1, c2 = st.columns([5, 1], vertical_alignment="top")
+        question = c1.text_input("Question", key="ask_question", label_visibility="collapsed",
+                                 placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
+        asked = c2.form_submit_button("Ask", type="primary", width="stretch")
+        s1, s2 = st.columns(2)
+        preset = s1.selectbox("Mission scenario (optional)", presets, index=pick_index(presets, qp.get("scenario")),
+                              placeholder="None: answer from documents only",
+                              help="If you choose one, the answer also gets the 5 closest NASA tests and the evidence "
+                                   "gaps for that scenario, computed from the data table (not by AI).")
+        pillar = s2.selectbox("Fire safety pillar", PILLARS, index=pick_index(PILLARS, qp.get("pillar")) or 0,
+                              format_func=PILLAR_LABELS.get, help=f"{tip('pillar')} Only used with a scenario.")
+    question = question.strip()
+    if asked:  # keep everything in the URL so a reload or a shared link shows the same answer
+        params = {"page": "ask", "q": question, "scenario": preset, "pillar": None if pillar == "All" else pillar}
+        params.update({k: qp.get(k) for k in ("o2_tol", "kpa_tol", "w_o2", "w_kpa")})
+        st.query_params.from_dict({k: v for k, v in params.items() if v})
+
+    context = scenario_context(preset, pillar, qfloat("o2_tol", O2_TOL), qfloat("kpa_tol", KPA_TOL),
+                               qfloat("w_o2", 1.0), qfloat("w_kpa", 1.0))
+    last = st.session_state.get("ask_result")
+    if question and (asked or last is None or last["question"] != question or last["context"] != context):
+        last = run_question(question, context)
+        st.session_state["ask_result"] = last
+
+    if not question or last is None or last["question"] != question:
+        st.markdown("**Not sure what to ask? Try one of these:**")
+        for i, example in enumerate(EXAMPLES):
+            st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
+        return
+
+    show_answer(last)
+    if preset:
+        st.markdown(f"<a href='{carry(page='scenario')}' target='_self'>See the full scenario report for "
+                    f"{escape(preset)} →</a>", unsafe_allow_html=True)
 
 
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
@@ -301,7 +523,7 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
 
     stacked = pts.groupby(["oxygen_pct", "pressure_kpa"]).size()
     top = stacked.idxmax()
-    box = (f" The dashed box is the {term('tolerance')} set above." if p is not None
+    box = (f" The dashed box is what counts as close ({term('tolerance')})." if p is not None
            else " Choose a scenario to place it on the map.")
     pillars = ", ".join(term(k) for k in PILLAR_COLORS)
     st.caption(f"{len(pts)} tests. Colour = {term('pillar')} ({pillars}); shape = experiment "
@@ -310,62 +532,112 @@ def conditions_map(pts, preset, p, o2_tol, kpa_tol):
                unsafe_allow_html=True)
 
 
-def article():
-    st.markdown("""
-<style>
-  .block-container {max-width: 1150px; padding-top: 2rem;}
-  h1 {font-size: 2.2rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .2rem; margin-bottom: .2rem;}
-  h2 {font-size: 1.6rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .15rem; margin-top: 1.6rem;}
-  .tagline {color: var(--atlas-muted); font-size: .9rem; margin-bottom: 1rem;}
-  .infobox {border: 1px solid var(--atlas-border); background: var(--atlas-panel); color: var(--atlas-text); padding: .6rem .8rem; font-size: .88rem;}
-  .infobox .ib-title {font-weight: 700; text-align: center; font-size: 1rem; padding-bottom: .4rem; display: block;}
-  .infobox table {width: 100%; border-collapse: collapse;}
-  .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
-  .infobox th {text-align: left; vertical-align: top; width: 45%;}
-  .hatnote {font-style: italic; color: var(--atlas-muted); padding-left: 1.6em; margin-bottom: .6rem;}
-  .toc a {text-decoration: none;}
-</style>""", unsafe_allow_html=True)
+def key_finding(gaps, preset, p, o2_tol, kpa_tol):
+    """One plain-language summary of the gap table: which fuel groups have tests near the scenario, which do not."""
+    def names(rows):
+        return ", ".join(f"{term(r.material_class)} ({r.pillar})" for r in rows)
 
+    near = [r for r in gaps.itertuples() if r.status != "GAP"]
+    far = [r for r in gaps.itertuples() if r.status == "GAP"]
+    box = f"±{o2_tol:g} {term('pp')} {term('O₂', 'o2')} and ±{kpa_tol:g} {term('kPa', 'kpa')}"
+    if near:
+        text = (f"<b>{len(near)} of {len(gaps)}</b> fuel groups have NASA tests within {box} of "
+                f"{escape(preset)}: {names(near)}.")
+        if far:
+            text += f" <b>No tests near these conditions</b> for {names(far)}."
+    else:
+        text = f"<b>No NASA test</b> in this atlas comes within {box} of {escape(preset)}, for any fuel group."
+    if p["gravity"] not in set(df["gravity"]):
+        text += (f" And none ran at {term(p['gravity'] + ' gravity', p['gravity'])}: "
+                 f"every test is from {term('microgravity')}.")
+    alert("info", text, label="Key finding")
+
+
+def scenario_page():
+    page_header("scenario", "Scenario report",
+                f"How close NASA's {len(df)} microgravity fire tests come to the atmosphere a crew would breathe. "
+                "Every number on this page is computed from NASA tables, not by AI.")
     presets = list(PRESETS)
-    default = presets.index(qp["scenario"]) if qp.get("scenario") in PRESETS else None  # nothing pre-selected
-    pillars = ["All", "prevention", "detection", "suppression"]
-    default_p = pillars.index(qp["pillar"]) if qp.get("pillar") in pillars else 0
+    c1, c2 = st.columns([1.2, 1])
+    preset = c1.selectbox("Mission scenario", presets, index=pick_index(presets, qp.get("scenario")),
+                          placeholder="Choose a scenario…", help=tip("scenario"), key="sc_preset")
+    pillar = c2.selectbox("Fire safety pillar", PILLARS, index=pick_index(PILLARS, qp.get("pillar")) or 0,
+                          format_func=PILLAR_LABELS.get, help=tip("pillar"), key="sc_pillar")
+    pil = None if pillar == "All" else pillar
+    set_param("scenario", preset)  # so the page links and a reload keep the choice
+    set_param("pillar", pil)
+    p = PRESETS.get(preset)
+    pts = df if pil is None else df[df["pillar"] == pil]
 
-    with st.sidebar:
-        st.markdown("<a href='?' target='_self' class='brand-link'>"
-                    "Flame in Freefall</a>", unsafe_allow_html=True)
-        st.markdown("### Contents")
-        st.markdown("<div class='toc'>" + "".join(
-            f"{i}&nbsp; <a href='#{a}'>{t}</a><br>" for i, (a, t) in enumerate(SECTIONS, 1)) + "</div>",
-            unsafe_allow_html=True)
-        st.markdown("<a href='?page=explore' target='_self'>Data explorer: filter all tests →</a>",
-                    unsafe_allow_html=True)
-        st.divider()
-        preset = st.selectbox("Mission scenario", presets, index=default, placeholder="Choose a scenario…",
-                              help=tip("scenario"))
-        if preset:
-            st.caption(PRESETS[preset]["source"])
-        pillar = st.radio("Fire safety pillar", pillars, index=default_p, help=tip("pillar"),
-                          captions=["Every test", "Stop fires starting", "Spot fires early", "Put fires out"])
+    if p is None:
+        alert("info", "<b>Choose a mission scenario above</b> (ISS cabin, Moon base, exploration atmosphere, "
+                      "spacesuit or Mars habitat). This report then shows:<br>"
+                      "1. a <b>key finding</b> in one sentence,<br>"
+                      "2. <b>where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
+                      "3. the <b>closest NASA tests</b>, with the original NASA notes,<br>"
+                      "4. a <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
+        h2("Test conditions map")
+        conditions_map(pts, None, None, None, None)
+        return
 
-    st.markdown("<h1>Flame in Freefall: Fire Safety Evidence Atlas</h1>", unsafe_allow_html=True)
-    st.markdown("<div class='tagline'>From NASA's microgravity combustion experiments (Physical Sciences Informatics)</div>",
-                unsafe_allow_html=True)
+    st.markdown(f"<div class='facts'><b>{escape(preset)}</b>: {p['o2']:g}% {term('O₂', 'o2')} at {p['kpa']:g} "
+                f"{term('kPa', 'kpa')} ({p['kpa'] / 6.895:.1f} {term('psi')}), {term(p['gravity'])} gravity. "
+                f"<span class='src'>Source: {escape(p['source'])}</span></div>", unsafe_allow_html=True)
 
+    with st.expander("Adjust what counts as close (advanced)"):
+        st.markdown("A test counts as **close** when it is inside **both** tolerances. Wider tolerances turn more "
+                    "gaps into covered. The weights only change the order of the closest-tests table.")
+        t1, t2 = st.columns(2)
+        o2_tol = t1.slider("Oxygen tolerance (± percentage points)", 0.5, 15.0, O2_TOL, 0.5, key="o2_tol",
+                           help=f"{tip('tolerance')} {tip('pp')}")
+        kpa_tol = t2.slider("Pressure tolerance (± kPa)", 1.0, 60.0, KPA_TOL, 1.0, key="kpa_tol",
+                            help=f"{tip('tolerance')} {tip('kpa')}")
+        w1, w2, w3 = st.columns(3)
+        w_o2 = w1.slider("Oxygen weight", 0.0, 3.0, 1.0, 0.1, key="w_o2", help=tip("weight"))
+        w_kpa = w2.slider("Pressure weight", 0.0, 3.0, 1.0, 0.1, key="w_kpa", help=tip("weight"))
+        n_rank = w3.slider("Tests to show", 5, 50, 10, 5, key="n_rank", help="How many of the closest tests to list.")
+        st.caption(f"distance = √((w_O₂ · ΔO₂ / {O2_SCALE:g})² + (w_P · ΔP / {KPA_SCALE:g})²); "
+                   f"relevance = 1 / (1 + distance). {O2_SCALE:g} O₂ points count the same as {KPA_SCALE:g} kPa.")
+    st.caption(f"Close means {p['o2'] - o2_tol:g}–{p['o2'] + o2_tol:g}% O₂ and "
+               f"{p['kpa'] - kpa_tol:g}–{p['kpa'] + kpa_tol:g} kPa.")
+
+    ranked = rank(df, preset, pillar=pil, n=n_rank, w_o2=w_o2, w_kpa=w_kpa)
+    gaps = gap(df, preset, o2_tol=o2_tol, kpa_tol=kpa_tol)
+    gaps = gaps if pil is None else gaps[gaps["pillar"] == pil]
+
+    key_finding(gaps, preset, p, o2_tol, kpa_tol)
+    h2("Where the evidence stops")
+    gap_banners(gaps, o2_tol, kpa_tol)
+    h2("Closest NASA tests")
+    evidence_table(ranked, p)
+    h2("Test conditions map")
+    conditions_map(pts, preset, p, o2_tol, kpa_tol)
+
+    h2("Ask about this scenario")
+    st.markdown("<div class='hatnote'>The answer uses NASA documents plus the closest tests and gaps on this page, "
+                "with your settings.</div>", unsafe_allow_html=True)
+    with st.form("ask_scenario", border=False):
+        f1, f2 = st.columns([5, 1], vertical_alignment="top")
+        q = f1.text_input("Question about this scenario", label_visibility="collapsed",
+                          placeholder=f"e.g. Which tests are closest to {preset}, and what happened in them?")
+        if f2.form_submit_button("Ask", type="primary", width="stretch") and q.strip():
+            params = {"page": "ask", "q": q.strip(), "scenario": preset, "pillar": pil}
+            for name, value, default in (("o2_tol", o2_tol, O2_TOL), ("kpa_tol", kpa_tol, KPA_TOL),
+                                         ("w_o2", w_o2, 1.0), ("w_kpa", w_kpa, 1.0)):
+                if value != default:
+                    params[name] = f"{value:g}"
+            st.query_params.from_dict({k: v for k, v in params.items() if v})
+            st.rerun()
+
+
+def about_page():
+    page_header("about", "About this atlas",
+                "What Flame in Freefall does, how to read it, and where its data comes from.")
     main, side = st.columns([2.3, 1], gap="large")
     with side:
-        p, counts = PRESETS.get(preset), df["experiment"].value_counts()
-        scenario_box = f"""
-  <span class="ib-title">{preset}</span>
-  <table>
-    <tr><th>{term('Oxygen', 'o2')}</th><td>{p['o2']:g}%</td></tr>
-    <tr><th>Pressure</th><td>{p['kpa']:g} {term('kPa', 'kpa')} ({p['kpa'] / 6.895:.1f} {term('psi')})</td></tr>
-    <tr><th>{term('Gravity', 'gravity')}</th><td>{term(p['gravity'])}</td></tr>
-    <tr><th>Source</th><td>{escape(p['source'])}</td></tr>
-  </table>
-  <hr style="margin:.5rem 0">""" if p else ""
+        counts = df["experiment"].value_counts()
         st.markdown(f"""
-<div class="infobox">{scenario_box}
+<div class="infobox">
   <span class="ib-title">NASA data in this atlas</span>
   <table>
     <tr><th>Tests</th><td>{len(df)}</td></tr>
@@ -375,61 +647,54 @@ def article():
 </div>""", unsafe_allow_html=True)
 
     with main:
-        heading("overview")
+        h2("What it does")
         st.markdown(
-            f"**Flame in Freefall** gathers NASA's {term('microgravity')} fire experiments into one table, ranks them "
-            f"against a mission {term('scenario')}, and shows where the evidence stops. It covers the three "
-            f"{term('pillars', 'pillar')} of spacecraft fire safety: "
+            f"**Flame in Freefall** gathers NASA's {term('microgravity')} fire experiments into one table, compares "
+            f"them with the atmosphere a crew would breathe (a mission {term('scenario')}), and shows where the "
+            f"evidence stops. It covers the three {term('pillars', 'pillar')} of spacecraft fire safety: "
             f"**{term('prevention')}** ({term('BASS')}, {term('BASS-II')}), "
             f"**{term('detection')}** ({term('SAME')}, {term('SAME-R')}) and **{term('suppression')}** ({term('FLEX')}). "
             "Words with a dotted underline show a short definition when you hover over them.",
             unsafe_allow_html=True)
         placeholder("TODO [Pitch]: 2-3 sentence summary + key finding")
 
-        heading("scenario")
-        pil = None if pillar == "All" else pillar
-        pts = df if pil is None else df[df["pillar"] == pil]
-        o2_tol = kpa_tol = None
+        h2("How to use it")
+        st.markdown(
+            "<ul>"
+            "<li><a href='?page=ask' target='_self'><b>Ask the evidence</b></a>: type a question and get an answer "
+            "written from NASA documents, with the passages it used.</li>"
+            "<li><a href='?page=scenario' target='_self'><b>Scenario report</b></a>: pick a mission atmosphere "
+            "(for example a Moon base) and see which NASA tests come close and where there are none.</li>"
+            "<li><a href='?page=explore' target='_self'><b>Data explorer</b></a>: filter all tests by any column "
+            "and download them.</li></ul>", unsafe_allow_html=True)
 
-        if p is None:
-            alert("info", "<b>Choose a mission scenario in the sidebar</b> (ISS cabin, Moon base, exploration "
-                          "atmosphere, spacesuit or Mars habitat). The atlas will then rank NASA tests against its "
-                          "oxygen, pressure and gravity, and show where the evidence stops.", label="Start here")
-        else:
-            st.markdown("<div class='hatnote'>All numbers below are computed from NASA tables, not by AI.</div>",
-                        unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
-            o2_tol = c1.slider("Oxygen tolerance (± percentage points)", 0.5, 15.0, 3.0, 0.5,
-                               help=f"{tip('tolerance')} {tip('pp')}")
-            kpa_tol = c2.slider("Pressure tolerance (± kPa)", 1.0, 60.0, 10.0, 1.0,
-                                help=f"{tip('tolerance')} {tip('kpa')}")
-            with st.expander("Ranking weights"):
-                w1, w2, w3 = st.columns(3)
-                w_o2 = w1.slider("Oxygen weight", 0.0, 3.0, 1.0, 0.1, help=tip("weight"))
-                w_kpa = w2.slider("Pressure weight", 0.0, 3.0, 1.0, 0.1, help=tip("weight"))
-                n_rank = w3.slider("Tests to show", 5, 50, 10, 5, help="How many of the closest tests to list.")
-                st.caption(f"distance = √((w_O₂ · ΔO₂ / {O2_SCALE:g})² + (w_P · ΔP / {KPA_SCALE:g})²); "
-                           f"relevance = 1 / (1 + distance). {O2_SCALE:g} O₂ points count the same as {KPA_SCALE:g} kPa.")
-            st.caption(f"Tolerance box: {p['o2'] - o2_tol:g}–{p['o2'] + o2_tol:g}% O₂ and "
-                       f"{p['kpa'] - kpa_tol:g}–{p['kpa'] + kpa_tol:g} kPa.")
+        h2("Reading a scenario report")
+        st.markdown(
+            f"- **Mission scenario**: the oxygen %, pressure and gravity a crew would live in.\n"
+            f"- **Fire safety pillar**: show only prevention, detection or suppression tests.\n"
+            f"- **Key finding**: one sentence summarising the evidence gaps below it.\n"
+            f"- **Where the evidence stops**: for each pillar and {term('fuel type')}, is any test close to the "
+            f"scenario? {term('Covered', 'covered')}, {term('Gravity gap', 'covered except gravity')} or "
+            f"{term('Gap', 'gap')}.\n"
+            f"- **Closest NASA tests**: every test sorted by {term('relevance')} (1.00 = same oxygen and pressure). "
+            "Pick one to read NASA's original note.\n"
+            "- **Test conditions map**: every test as a dot; the star is the scenario and the dashed box is "
+            "what counts as close.\n"
+            f"- **Adjust what counts as close**: the {term('tolerances', 'tolerance')} decide covered versus gap; "
+            f"the {term('weights', 'weight')} only change the order of the closest tests.",
+            unsafe_allow_html=True)
 
-        heading("evidence")
-        if p is None:
-            st.caption("Choose a scenario to rank the tests.")
-        else:
-            evidence_table(rank(df, preset, pillar=pil, n=n_rank, w_o2=w_o2, w_kpa=w_kpa), p)
+        h2("How the AI answer works")
+        st.markdown(
+            "1. A local search (no AI) finds the 5 passages in NASA's PDF reports that best match the question.\n"
+            "2. A language model hosted by Groq writes an answer from those passages only. If you chose a "
+            "scenario, it also gets the closest tests and gaps from the data table.\n"
+            "3. Every claim must cite a passage, [S1] to [S5]. Answers that cite anything else are rejected, and if "
+            "the passages do not cover the question, it says so.\n\n"
+            "Numbers come from the passages or the data table, never from the model's memory. "
+            "Check the passages: a citation does not prove the claim is right.")
 
-        heading("gaps")
-        if p is None:
-            st.caption("Choose a scenario to see which pillars and fuel types have tests near it.")
-        else:
-            gaps = gap(df, preset, o2_tol=o2_tol, kpa_tol=kpa_tol)
-            gap_banners(gaps if pil is None else gaps[gaps["pillar"] == pil], o2_tol, kpa_tol)
-
-        heading("map")
-        conditions_map(pts, preset, p, o2_tol, kpa_tol)
-
-        heading("experiments")
+        h2("Experiments")
         for name, pillar_label, desc in [
             ("BASS / BASS-II", "Prevention",
              f"{term('BASS')} / {term('BASS-II')}: how solid materials ({term('PMMA', 'pmma')} plastic, fabric such as "
@@ -447,32 +712,21 @@ def article():
                 st.markdown(desc, unsafe_allow_html=True)
                 placeholder("TODO: summary card, key findings with page citations, small chart")
 
-        heading("ask")
-        st.markdown("<div class='hatnote'>Answers use only NASA documents and the tests ranked above, with citations. "
-                    "If there is no evidence, the assistant says so.</div>", unsafe_allow_html=True)
-        question = st.text_input("Ask a question about fire safety evidence", value=qp.get("q", ""),
-                                 placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
-        placeholder("TODO [RAG 2]: answer(question, rank(...), gap(...)) → text with citations")
-
-        heading("earth")
+        h2("Applications on Earth")
         placeholder("TODO [Pitch]: NASA spinoffs: firefighter air tanks, smoke detector, protective clothing")
 
-        heading("method")
+        h2("Methodology and use of AI")
         st.markdown(
             f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102, "
             "built with `build_master.py`.\n"
             f"- **Ranking:** distance on O₂ and pressure ({term('relevance')}, {term('weights', 'weight')} and "
-            f"{term('tolerances', 'tolerance')} shown above).\n"
+            f"{term('tolerances', 'tolerance')} in the scenario report).\n"
             f"- **{term('Outcome', 'outcome')} categories** for BASS/BASS-II are our reading of crew notes; "
             "the original note is always shown.\n"
-            "- **Use of AI:** TODO list tools used (code assistance, Gemini for answers).", unsafe_allow_html=True)
+            "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
 
-        heading("references")
+        h2("References")
         placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
-
-    st.markdown("<hr><div class='tagline'>Built for NASA Space Apps Challenge 2026, Flame in Freefall. "
-                "Data: NASA Physical Sciences Informatics. Not affiliated with or endorsed by NASA.</div>",
-                unsafe_allow_html=True)
 
 
 # ====================================================================== DATA EXPLORER (pick columns → filter → results)
@@ -520,17 +774,8 @@ def column_filter(c):
 
 
 def explore():
-    st.markdown("""
-<style>
-  [data-testid="stSidebar"], [data-testid="collapsedControl"] {display: none;}
-  .block-container {max-width: 1150px; padding-top: 2rem;}
-  h1 {font-size: 2.2rem !important; border-bottom: 1px solid var(--atlas-border); padding-bottom: .2rem; margin-bottom: .2rem;}
-  .tagline {color: var(--atlas-muted); font-size: .9rem; margin-bottom: 1rem;}
-</style>""", unsafe_allow_html=True)
-    st.markdown("<a href='?' target='_self' style='text-decoration:none'>← Flame in Freefall</a>", unsafe_allow_html=True)
-    st.markdown("<h1>Data explorer</h1>", unsafe_allow_html=True)
-    st.markdown(f"<div class='tagline'>Filter all {len(df)} NASA microgravity fire tests by any column. "
-                "Every row keeps its source file and page.</div>", unsafe_allow_html=True)
+    page_header("explore", "Data explorer", f"Filter all {len(df)} NASA microgravity fire tests by any column. "
+                "Every row keeps its source file and page.")
 
     # 1) pick columns, confirm with Done (form = no reload on every pick)
     with st.form("pick_columns", border=False):
@@ -565,14 +810,17 @@ def explore():
         return
     st.dataframe(res, hide_index=True, width="stretch", column_config={
         c: st.column_config.Column(LABELS[c], help=tip(COLUMN_HELP.get(c, c))) for c in res.columns})
-    st.download_button("Download these tests (CSV)", res.to_csv(index=False).encode("utf-8"),
+    st.download_button("Download these tests (.csv)", res.to_csv(index=False).encode("utf-8"),
                        file_name="flame_in_freefall_tests.csv", mime="text/csv")
 
 
 # ====================================================================== router
-if qp.get("page") == "article":
-    article()
-elif qp.get("page") == "explore":
-    explore()
+page = qp.get("page")
+if page == "article":  # old links: the article page was split into Ask and Scenario report
+    page = "ask" if qp.get("q") else "scenario"
+    st.query_params["page"] = page
+if page in ("ask", "scenario", "explore", "about"):
+    {"ask": ask_page, "scenario": scenario_page, "explore": explore, "about": about_page}[page]()
+    site_footer()
 else:
     home()
