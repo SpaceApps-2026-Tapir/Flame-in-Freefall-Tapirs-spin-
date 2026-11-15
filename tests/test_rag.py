@@ -9,6 +9,26 @@ from rag import answer, retrieve
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_same_r_query_retains_context_and_report_aliases(self):
+        from vector_store import search
+        collection = MagicMock()
+        collection.count.return_value = 1
+        collection.query.return_value = {"ids": [["0"]], "distances": [[0.1]]}
+        collection.get.return_value = {"ids": ["0"], "documents": [
+            "SAMER extended SAME to study additional materials and test conditions. " * 4],
+            "metadatas": [{"document_id": "sam er", "title": "SAME-R", "page": 2}]}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("vector_store.client_and_embedding", return_value=(client, None)):
+                search("What were the objectives of SAME-R?", path=path)
+        query = collection.query.call_args.kwargs
+        self.assertIn("SAME-R", query["query_texts"][0])
+        self.assertIn("SAMER", query["query_texts"][0])
+        self.assertEqual(query["where"], {"experiment": {"$in": ["SAME-R"]}})
+
     def test_supported_definition_uses_structured_source_ids(self):
         passage = {"title": "ISS Researchers Guide", "page": 43,
                    "text": "Microgravity describes an environment where gravitational body force is significantly less than on Earth."}

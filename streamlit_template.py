@@ -272,6 +272,7 @@ def records(frame, columns):
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
+    # Experiment-context retrieval v2; changing this wrapper invalidates old results.
     return retrieve(question)
 
 
