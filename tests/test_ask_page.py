@@ -69,6 +69,20 @@ class AskPageTests(unittest.TestCase):
         self.submit("New question after the example")
         self.assert_answer("New question after the example")
 
+    def test_no_answer_shows_suggestions_instead_of_passages(self):
+        from rag import NO_EVIDENCE
+        self.answer.side_effect = lambda question, *_: (
+            NO_EVIDENCE if question == "Unanswerable question" else f"Answer for: {question} [S1]")
+        self.app.run()
+        self.submit("Unanswerable question")
+        self.assertEqual(len(self.app.expander), 0)
+        self.assertTrue(any("Try one of these" in m.value for m in self.app.markdown))
+        self.assertFalse(any("Retrieved passages" in m.value for m in self.app.markdown))
+        example = self.app.button[1].label
+        self.app.button[1].click().run()
+        self.assert_answer(example)
+        self.assertEqual(len(self.app.expander), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
