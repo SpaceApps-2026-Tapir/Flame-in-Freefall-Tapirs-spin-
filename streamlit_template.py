@@ -336,14 +336,23 @@ def show_answer(last):
     st.caption(context_line(last["context"]))
 
 
+def select_example(question):
+    """Update the question before Streamlit renders the form again."""
+    st.session_state["ask_question"] = question
+    st.query_params["q"] = question
+
+
 def ask_page():
     page_header("ask", "Ask the evidence",
                 "Answers come only from NASA documents, with citations. "
                 "If the documents do not cover your question, the assistant says so.")
     presets = list(PRESETS)
+    # Seed shared links once; URL updates must not reset the question widget.
+    if "ask_question" not in st.session_state:
+        st.session_state["ask_question"] = qp.get("q", "")
     with st.form("ask", border=False):
         c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
-        question = c1.text_input("Question", value=qp.get("q", ""), label_visibility="collapsed",
+        question = c1.text_input("Question", key="ask_question", label_visibility="collapsed",
                                  placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
         asked = c2.form_submit_button("Ask", type="primary", width="stretch")
         s1, s2 = st.columns(2)
@@ -369,9 +378,7 @@ def ask_page():
     if not question or last is None or last["question"] != question:
         st.markdown("**Not sure what to ask? Try one of these:**")
         for i, example in enumerate(EXAMPLES):
-            if st.button(example, key=f"example_{i}"):
-                st.query_params["q"] = example
-                st.rerun()
+            st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
         return
 
     show_answer(last)
