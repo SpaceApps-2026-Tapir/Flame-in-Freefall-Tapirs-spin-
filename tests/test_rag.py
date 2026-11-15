@@ -186,5 +186,26 @@ class RetrievalTests(unittest.TestCase):
         self.assertNotIn("test-key", message)
 
 
+class ReferenceMetadataTests(unittest.TestCase):
+    def test_reference_metadata_is_complete_and_ieee(self):
+        from references import load_references, validate
+
+        self.assertEqual(validate(), [])
+        refs = {ref["ref_id"]: ref for ref in load_references()}
+        self.assertIn("Bhattacharjee", refs["ref-psi-25"]["authors"])
+        self.assertNotIn("Bhattachjee", refs["ref-psi-25"]["authors"])
+        self.assertIn("Fumiaki Takahashi", refs["ref-psi-26"]["authors"])
+        self.assertEqual(len(refs["ref-tm-20210011385"]["authors"].split(";")), 8)
+        self.assertEqual(refs["ref-psi-25"]["license"], "CC0-1.0")
+        self.assertEqual(refs["ref-tm-20210011385"]["license"], "NASA public use permitted")
+
+        for ref in refs.values():
+            self.assertTrue(ref["authors"])
+            self.assertTrue(ref["license"])
+            self.assertIn('"', ref["citation"])
+            self.assertIn("Available:", ref["citation"])
+            self.assertNotIn("(20", ref["citation"])
+
+
 if __name__ == "__main__":
     unittest.main()

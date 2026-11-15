@@ -185,7 +185,7 @@ PAGE_CSS = """
   .index-table a {text-decoration: none;}
   .index-table a:hover {text-decoration: underline;}
   .ref-item {margin: .65rem 0; line-height: 1.5;}
-  .ref-item .ref-cite {color: var(--atlas-muted); font-size: .85rem; margin-top: .1rem;}
+  .ref-item .ref-meta, .ref-item .ref-authors {color: var(--atlas-muted); font-size: .85rem; margin-top: .1rem;}
   .hatnote {font-style: italic; color: var(--atlas-muted); margin-bottom: .6rem;}
 </style>"""
 
@@ -396,8 +396,25 @@ def ask_page():
                     f"{escape(preset)} →</a>", unsafe_allow_html=True)
 
 
-def reference_line(ref, show_citation=False):
-    """One reference: title, year, identifier and a DOI or source link."""
+def _ieee_citation_html(ref):
+    """Escape an IEEE citation and make its DOI or source URL clickable."""
+    citation = escape(ref.get("citation", ""))
+    target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
+              else ref.get("url", ""))
+    if not target:
+        return citation
+    url = escape(target, quote=True)
+    label = escape(target)
+    return citation.replace(
+        label,
+        f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{label}</a>",
+        1,
+    )
+
+
+def reference_line(ref, show_citation=False, number=None):
+    """One reference: compact metadata, or the full IEEE citation on the About page."""
+    prefix = f"[{number}] " if number is not None else ""
     title = escape(ref.get("title", "Untitled reference"))
     year = f" ({escape(str(ref['year']))})" if ref.get("year") else ""
     ident = f" <code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else ""
@@ -411,19 +428,34 @@ def reference_line(ref, show_citation=False):
     else:
         link = "no link recorded"
     role = f" · {escape(ref['role'])}" if ref.get("role") else ""
-    citation = (f"<div class='ref-cite'>{escape(ref['citation'])}</div>"
-                if show_citation and ref.get("citation") else "")
-    st.markdown(f"<div class='ref-item'><b>{title}</b>{year}{ident} — {link}{role}{citation}</div>",
+    authors = (f"<div class='ref-authors'>{escape(ref['authors'])}</div>"
+               if ref.get("authors") else "")
+    if show_citation and ref.get("citation"):
+        meta = " · ".join(part for part in [
+            f"<code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else "",
+            escape(ref["role"]) if ref.get("role") else "",
+            f"License: {escape(ref['license'])}" if ref.get("license") else "",
+        ] if part)
+        meta = f"<div class='ref-meta'>{meta}</div>" if meta else ""
+        st.markdown(f"<div class='ref-item'>{prefix}{_ieee_citation_html(ref)}{meta}</div>",
+                    unsafe_allow_html=True)
+        return
+    st.markdown(f"<div class='ref-item'><b>{title}</b>{year}{ident} — {link}{role}{authors}</div>",
                 unsafe_allow_html=True)
 
 
-def render_references(experiment, show_citation=False):
+def render_references(experiment, show_citation=False, start=1):
+    """Render one experiment's references and return the next IEEE list number."""
     refs = references_for(experiment)
     if not refs:
         st.caption("No references recorded for this experiment.")
-        return
+        return start
+    number = start
     for ref in refs:
-        reference_line(ref, show_citation=show_citation)
+        reference_line(ref, show_citation=show_citation,
+                       number=number if show_citation else None)
+        number += 1
+    return number
 
 
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
@@ -851,14 +883,17 @@ def about_page():
             "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
 
         h2("References")
-        st.markdown("Datasets and reports used by this atlas. Dataset DOIs resolve to the canonical NASA PSI "
-                    "landing page, where the experimental tables and files are published.")
+        st.markdown("Datasets and reports used by this atlas, in IEEE style. Dataset DOIs resolve to the canonical "
+                    "NASA PSI landing page, where the experimental tables and files are published. "
+                    "Licenses are shown for each source.")
+        number = 1
         for experiment in ["BASS", "BASS-II", "FLEX", "SAME", "SAME-R"]:
             if references_for(experiment):
                 st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
-                render_references(experiment, show_citation=True)
+                number = render_references(experiment, show_citation=True, start=number)
         st.caption("Reference metadata is maintained in `references.csv` and linked to experiments in "
-                   "`experiment_references.csv`. Row-level provenance remains visible in the test details.")
+                   "`experiment_references.csv`. See `THIRD_PARTY_NOTICES.md` for the full license audit. "
+                   "Row-level provenance remains visible in the test details.")
 
 
 # ====================================================================== DATA EXPLORER (pick columns → filter → results)

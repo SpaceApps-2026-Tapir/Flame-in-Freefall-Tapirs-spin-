@@ -2,11 +2,12 @@
 
 The master test table keeps the row-level provenance (`source_file` and
 `source_location`). This module adds the canonical, shareable references:
-PSI datasets, technical reports, and papers.
+PSI datasets, technical reports, and papers. Citations use IEEE style.
 """
 from __future__ import annotations
 
 import csv
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -68,10 +69,21 @@ def validate() -> list[str]:
             errors.append(f"{rid}: invalid ref_type {ref.get('ref_type')!r}")
         if not ref.get("title"):
             errors.append(f"{rid}: missing title")
+        if not ref.get("authors"):
+            errors.append(f"{rid}: missing authors")
         if not ref.get("url") and not ref.get("doi"):
             errors.append(f"{rid}: needs a URL or DOI")
         if ref.get("doi") and not ref["doi"].startswith("10."):
             errors.append(f"{rid}: DOI does not look like a DOI: {ref['doi']!r}")
+        if not ref.get("license"):
+            errors.append(f"{rid}: missing license")
+        citation = ref.get("citation", "")
+        if not citation:
+            errors.append(f"{rid}: missing citation")
+        elif '"' not in citation or "Available:" not in citation:
+            errors.append(f"{rid}: citation does not look like IEEE style")
+        elif re.search(r"\(\d{4}\)\.", citation):
+            errors.append(f"{rid}: citation looks like APA, not IEEE")
 
     for link in load_experiment_references():
         rid = link.get("ref_id", "?")

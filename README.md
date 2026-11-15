@@ -161,9 +161,20 @@ With `uv run`, you do not need to activate the environment manually. Track `pypr
 
 ## License
 
-The original code and documentation in this repository are licensed under the
-MIT License. See [LICENSE](LICENSE).
+The original code, documentation and the logo in this repository are licensed
+under the MIT License. See [LICENSE](LICENSE).
 
-NASA datasets, reports and PDFs remain subject to their own terms. This license
-does not relicense third-party data or grant rights to NASA names, logos or
-trademarks. This project is not affiliated with or endorsed by NASA.
+Third-party data and documents keep their own terms. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full audit. In short:
+
+- The five NASA PSI datasets used by the atlas are released under **CC0-1.0**.
+- The BASS-II Summary Report is a NASA/NTRS public-use document, not CC0.
+- NASA PDFs are downloaded from the team's Google Drive folder and are not
+  tracked in Git. One of them, SAE paper 2005-01-2930, is **copyright SAE
+  International** and is not covered by this repository's MIT license. Confirm
+  permission before redistributing it.
+- Python dependencies are permissively licensed (MIT, Apache-2.0, BSD and
+  MPL-2.0); there are no GPL, AGPL, SSPL or BUSL dependencies.
+
+This license does not grant rights to NASA names, logos or trademarks. This
+project is not affiliated with or endorsed by NASA.
