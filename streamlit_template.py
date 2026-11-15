@@ -282,7 +282,7 @@ def cached_index_inventory():
 
 # Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_answer(question, passages, context, model, _api_key):
+def cached_answer(question, passages, context, model, _api_key, pipeline_version):
     return answer(question, passages, context, _api_key, model)
 
 
@@ -312,7 +312,7 @@ def run_question(question, context):
                               "to get a written answer.")
             return result
         with st.spinner("Reading the evidence and writing an answer…"):
-            result["text"] = cached_answer(question, result["passages"], context, model, api_key)
+            result["text"] = cached_answer(question, result["passages"], context, model, api_key, "structured-v1")
     except (ValueError, RuntimeError, OSError) as exc:
         result["error"] = str(exc)
     return result
@@ -332,9 +332,9 @@ def show_answer(last):
     if last["error"]:
         alert("bad", escape(last["error"]), label="Error")
     elif last["text"] in (NO_EVIDENCE, NO_PASSAGES):
-        alert("info", "<b>The NASA documents in this atlas do not answer this question.</b> The atlas only knows "
-                      "what NASA's microgravity fire reports say, so it cannot answer general questions "
-                      "(like <i>what is fire?</i>) or compare things the reports never compare.<br>"
+        alert("info", "<b>The retrieved passages do not provide enough evidence to answer this question.</b> "
+                      "Other pages or documents may contain the answer. General definitions can be answered "
+                      "when the retrieved sources explain them.<br>"
                       "Try naming an experiment, a material or a condition, for example: <i>Which materials "
                       "had the highest flame spread rate in BASS-II?</i> or <i>How did oxygen concentration "
                       "change flame spread over PMMA?</i>", label="No answer")

@@ -70,6 +70,12 @@ human review. Try supported, unrelated, and unanswerable questions before use.
 
 Offline checks: `uv run python -m unittest discover -s tests`.
 Groq integration follows the [Chat Completions API](https://console.groq.com/docs/api-reference).
+With `openai/gpt-oss-120b` or `openai/gpt-oss-20b`, answers use Groq's strict
+structured output: each claim includes validated source IDs, and the app renders
+the citation markers. Other models retain text citation validation. Definitions
+are allowed when supported by retrieved passages. A refusal means these passages
+were insufficient, not that every document in the collection lacks the answer.
+Source IDs validate references, not the factual correctness of a claim.
 
 ## Team members
 
