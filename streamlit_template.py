@@ -38,6 +38,8 @@ BASE_CSS = f"""
   .home-link:focus-visible {{outline: 2px solid var(--atlas-link); outline-offset: 3px;}}
   .placeholder {{border: 1px dashed var(--atlas-border); background: var(--atlas-placeholder); color: var(--atlas-note); padding: 1.2rem; text-align: center;}}
   footer {{visibility: hidden;}}
+  /* Reserve a row below form inputs for Streamlit's absolutely positioned Enter hint. */
+  [data-testid="stForm"] [data-testid="stTextInput"] {{padding-bottom: 1.5rem;}}
   abbr.gl {{text-decoration: underline dotted; text-underline-offset: 3px; cursor: help;}}
   .alert {{border-radius: .35rem; border-left: 5px solid; padding: .7rem 1rem; margin: .45rem 0; line-height: 1.55;}}
   .alert.ok {{background: light-dark(#e8f5e9, #123124); color: light-dark(#14532d, #c0f5d5); border-color: light-dark(#0ca30c, #4ade80);}}
@@ -135,7 +137,7 @@ def home():
     _, c, _ = st.columns([0.6, 3, 0.6])
     with c:
         with st.form("search", border=False):
-            s1, s2 = st.columns([3, 0.55], vertical_alignment="bottom")
+            s1, s2 = st.columns([3, 0.55], vertical_alignment="top")
             q = s1.text_input("Question", placeholder="Ask the evidence, e.g. Do flames go out on their own at 30% oxygen?",
                               label_visibility="collapsed")
             go = s2.form_submit_button("Search")
@@ -351,7 +353,7 @@ def ask_page():
     if "ask_question" not in st.session_state:
         st.session_state["ask_question"] = qp.get("q", "")
     with st.form("ask", border=False):
-        c1, c2 = st.columns([5, 1], vertical_alignment="bottom")
+        c1, c2 = st.columns([5, 1], vertical_alignment="top")
         question = c1.text_input("Question", key="ask_question", label_visibility="collapsed",
                                  placeholder="e.g. In the high-oxygen FLEX tests, did flames go out on their own?")
         asked = c2.form_submit_button("Ask", type="primary", width="stretch")
@@ -615,7 +617,7 @@ def scenario_page():
     st.markdown("<div class='hatnote'>The answer uses NASA documents plus the closest tests and gaps on this page, "
                 "with your settings.</div>", unsafe_allow_html=True)
     with st.form("ask_scenario", border=False):
-        f1, f2 = st.columns([5, 1], vertical_alignment="bottom")
+        f1, f2 = st.columns([5, 1], vertical_alignment="top")
         q = f1.text_input("Question about this scenario", label_visibility="collapsed",
                           placeholder=f"e.g. Which tests are closest to {preset}, and what happened in them?")
         if f2.form_submit_button("Ask", type="primary", width="stretch") and q.strip():
@@ -808,7 +810,7 @@ def explore():
         return
     st.dataframe(res, hide_index=True, width="stretch", column_config={
         c: st.column_config.Column(LABELS[c], help=tip(COLUMN_HELP.get(c, c))) for c in res.columns})
-    st.download_button("Download these tests (CSV)", res.to_csv(index=False).encode("utf-8"),
+    st.download_button("Download these tests (.csv)", res.to_csv(index=False).encode("utf-8"),
                        file_name="flame_in_freefall_tests.csv", mime="text/csv")
 
 
