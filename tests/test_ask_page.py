@@ -7,6 +7,8 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from security import MAX_QUESTION_CHARS
+
 
 class AskPageTests(unittest.TestCase):
     def setUp(self):
@@ -68,6 +70,14 @@ class AskPageTests(unittest.TestCase):
         self.assert_answer(example)
         self.submit("New question after the example")
         self.assert_answer("New question after the example")
+
+    def test_overlong_question_is_rejected_before_retrieval(self):
+        self.app.run()
+        self.submit("x" * (MAX_QUESTION_CHARS + 1))
+        rendered = " ".join(markdown.value for markdown in self.app.markdown)
+        self.assertIn("Question is too long", rendered)
+        self.retrieve.assert_not_called()
+        self.answer.assert_not_called()
 
     def test_no_answer_shows_suggestions_instead_of_passages(self):
         from rag import NO_EVIDENCE
