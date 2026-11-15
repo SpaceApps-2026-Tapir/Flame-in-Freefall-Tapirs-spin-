@@ -66,6 +66,36 @@ def build_index(chunks, path=STORE, embedding_function=None):
     # Keep previous snapshots so readers already using them can finish safely.
 
 
+def index_inventory(path=STORE):
+    """Return one row per PDF in the active index, with its passage count."""
+    pointer = Path(path) / "active.json"
+    if not pointer.exists():
+        return []
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(path))
+    name = json.loads(pointer.read_text(encoding="utf-8"))["collection"]
+    collection = client.get_collection(name)
+    metadata_rows = collection.get(include=["metadatas"]).get("metadatas") or []
+    documents = {}
+    for metadata in metadata_rows:
+        metadata = metadata or {}
+        key = metadata.get("document_id") or metadata.get("title")
+        if not key:
+            continue
+        document = documents.setdefault(key, {
+            "document_id": key,
+            "title": metadata.get("title") or "Untitled PDF",
+            "experiment": metadata.get("experiment") or "",
+            "url": metadata.get("source_page_url") or metadata.get("pdf_url") or "",
+            "passages": 0,
+        })
+        if not document["url"]:
+            document["url"] = metadata.get("source_page_url") or metadata.get("pdf_url") or ""
+        document["passages"] += 1
+    return sorted(documents.values(), key=lambda row: (row["title"].casefold(), row["document_id"]))
+
+
 def search(question, limit=5, path=STORE, embedding_function=None, max_distance=None):
     """Return cosine nearest neighbours; distance is not confidence or proof."""
     pointer = path / "active.json"

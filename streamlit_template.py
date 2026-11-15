@@ -13,6 +13,7 @@ from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
 from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
 from references import dataset_reference, references_for
+from vector_store import index_inventory
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -176,6 +177,15 @@ PAGE_CSS = """
   .infobox table {width: 100%; border-collapse: collapse;}
   .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
   .infobox th {text-align: left; vertical-align: top; width: 45%;}
+  .index-table {width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; font-size: .92rem;}
+  .index-table th, .index-table td {padding: .42rem .55rem; border-bottom: 1px solid var(--atlas-divider); text-align: left;}
+  .index-table th {color: var(--atlas-muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em;}
+  .index-table .num {text-align: right; font-variant-numeric: tabular-nums;}
+  .index-table tr.total td {font-weight: 700; border-top: 2px solid var(--atlas-border);}
+  .index-table a {text-decoration: none;}
+  .index-table a:hover {text-decoration: underline;}
+  .ref-item {margin: .65rem 0; line-height: 1.5;}
+  .ref-item .ref-cite {color: var(--atlas-muted); font-size: .85rem; margin-top: .1rem;}
   .hatnote {font-style: italic; color: var(--atlas-muted); margin-bottom: .6rem;}
 </style>"""
 
@@ -261,6 +271,11 @@ def records(frame, columns):
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
     return retrieve(question)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_index_inventory():
+    return index_inventory()
 
 
 # Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
@@ -384,18 +399,22 @@ def ask_page():
 def reference_line(ref, show_citation=False):
     """One reference: title, year, identifier and a DOI or source link."""
     title = escape(ref.get("title", "Untitled reference"))
-    year = f" ({ref['year']})" if ref.get("year") else ""
-    ident = f" `{escape(ref['identifier'])}`" if ref.get("identifier") else ""
+    year = f" ({escape(str(ref['year']))})" if ref.get("year") else ""
+    ident = f" <code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else ""
     if ref.get("doi"):
-        link = f"[DOI {ref['doi']}](https://doi.org/{ref['doi']})"
+        doi = escape(ref["doi"], quote=True)
+        link = (f"<a href='https://doi.org/{doi}' target='_blank' rel='noopener noreferrer'>"
+                f"DOI {doi}</a>")
     elif ref.get("url"):
-        link = f"[source]({ref['url']})"
+        link = (f"<a href='{escape(ref['url'], quote=True)}' target='_blank' rel='noopener noreferrer'>"
+                "source</a>")
     else:
         link = "no link recorded"
-    role = f" · {ref['role']}" if ref.get("role") else ""
-    st.markdown(f"- **{title}**{year}{ident} — {link}{role}")
-    if show_citation and ref.get("citation"):
-        st.caption(ref["citation"])
+    role = f" · {escape(ref['role'])}" if ref.get("role") else ""
+    citation = (f"<div class='ref-cite'>{escape(ref['citation'])}</div>"
+                if show_citation and ref.get("citation") else "")
+    st.markdown(f"<div class='ref-item'><b>{title}</b>{year}{ident} — {link}{role}{citation}</div>",
+                unsafe_allow_html=True)
 
 
 def render_references(experiment, show_citation=False):
@@ -656,6 +675,66 @@ def scenario_page():
             st.rerun()
 
 
+INDEX_TOPIC = {"BASS": "Prevention", "BASS-II": "Prevention", "FLEX": "Suppression",
+               "SAME": "Detection", "SAME-R": "Detection"}
+INDEX_TOPIC_ORDER = ("Prevention", "Detection", "Suppression", "Background / cross-cutting")
+
+
+def index_tables(inventory):
+    """Group the active PDF index by atlas topic, plus one row per PDF."""
+    rows = []
+    for item in inventory:
+        topic = INDEX_TOPIC.get(item.get("experiment", ""), INDEX_TOPIC_ORDER[-1])
+        rows.append({"PDF": item.get("title", "Untitled PDF"), "Topic": topic,
+                     "Embeddings": item.get("passages", 0), "URL": item.get("url", "")})
+    grouped = {}
+    for row in rows:
+        bucket = grouped.setdefault(row["Topic"], {"Topic": row["Topic"], "PDFs": 0, "Embeddings": 0})
+        bucket["PDFs"] += 1
+        bucket["Embeddings"] += row["Embeddings"]
+
+    def topic_order(topic):
+        return INDEX_TOPIC_ORDER.index(topic) if topic in INDEX_TOPIC_ORDER else len(INDEX_TOPIC_ORDER)
+
+    summary = sorted(grouped.values(), key=lambda row: (topic_order(row["Topic"]), row["Topic"]))
+    summary.append({"Topic": "Total", "PDFs": len(rows),
+                    "Embeddings": sum(row["Embeddings"] for row in rows)})
+    rows.sort(key=lambda row: (topic_order(row["Topic"]), row["PDF"].casefold()))
+    return summary, rows
+
+
+def index_summary_html(summary):
+    body = "".join(
+        f"<tr{' class=total' if row['Topic'] == 'Total' else ''}>"
+        f"<td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['PDFs']:,}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in summary)
+    return ("<table class='index-table' aria-label='PDFs and embeddings by topic'>"
+            "<thead><tr><th scope='col'>Topic</th><th scope='col' class='num'>PDFs</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
+
+
+def index_pdf_html(rows):
+    def pdf_link(row):
+        title = escape(row["PDF"])
+        url = row.get("URL", "")
+        if not url:
+            return title
+        return (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer' "
+                f"title='Open PDF in a new tab'>{title} ↗</a>")
+
+    body = "".join(
+        f"<tr><td>{pdf_link(row)}</td><td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in rows)
+    return ("<table class='index-table' aria-label='Indexed PDFs, topics and embeddings'>"
+            "<thead><tr><th scope='col'>PDF</th><th scope='col'>Topic</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
+
+
 def about_page():
     page_header("about", "About this atlas",
                 "What Flame in Freefall does, how to read it, and where its data comes from.")
@@ -719,6 +798,22 @@ def about_page():
             "the passages do not cover the question, it says so.\n\n"
             "Numbers come from the passages or the data table, never from the model's memory. "
             "Check the passages: a citation does not prove the claim is right.")
+
+        h2("NASA documents indexed")
+        inventory = cached_index_inventory()
+        if not inventory:
+            st.caption("No PDF index is available yet. Run `python scripts/ingest_documents.py` to build it.")
+        else:
+            summary, rows = index_tables(inventory)
+            st.markdown(f"The local search index contains **{len(rows)} PDFs** converted into "
+                        f"**{summary[-1]['Embeddings']:,} embedded passages**. Each passage is a 100-word "
+                        "overlapping chunk; the table groups them by the atlas topic they support.")
+            st.markdown(index_summary_html(summary), unsafe_allow_html=True)
+            with st.expander("See the PDFs in the index"):
+                st.markdown(index_pdf_html(rows), unsafe_allow_html=True)
+                st.caption("Click a PDF title to open it in a new tab.")
+            st.caption("Topics come from the experiment recorded in `documents/manifest.csv`; PDFs without "
+                       "a single experiment are grouped as background / cross-cutting.")
 
         h2("Experiments")
         for name, pillar_label, desc, experiments in [

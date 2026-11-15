@@ -45,6 +45,35 @@ class RetrievalTests(unittest.TestCase):
             self.assertIn("Insufficient", answer("question", [], {}, "", ""))
             network.assert_not_called()
 
+    def test_index_inventory_counts_passages_by_pdf(self):
+        from vector_store import index_inventory
+        collection = MagicMock()
+        collection.get.return_value = {"metadatas": [
+            {"document_id": "bass", "title": "BASS report", "experiment": "BASS",
+             "source_page_url": "https://example.com/bass"},
+            {"document_id": "flex", "title": "FLEX report", "experiment": "FLEX",
+             "pdf_url": "https://example.com/flex.pdf"},
+            {"document_id": "bass", "title": "BASS report", "experiment": "BASS"},
+            {"title": "Unassigned", "experiment": ""},
+            {"title": "Unassigned", "experiment": ""},
+        ]}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("chromadb.PersistentClient", return_value=client):
+                rows = index_inventory(path)
+        self.assertEqual([(r["title"], r["experiment"], r["url"], r["passages"]) for r in rows],
+                         [("BASS report", "BASS", "https://example.com/bass", 2),
+                          ("FLEX report", "FLEX", "https://example.com/flex.pdf", 1),
+                          ("Unassigned", "", "", 2)])
+
+    def test_index_inventory_without_active_index_is_empty(self):
+        from vector_store import index_inventory
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(index_inventory(Path(directory) / "absent"), [])
+
     def test_retrieval_skips_title_slides_and_contents(self):
         from vector_store import search
         collection = MagicMock()
