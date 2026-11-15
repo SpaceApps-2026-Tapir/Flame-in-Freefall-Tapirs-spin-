@@ -57,6 +57,28 @@ CSS = """
 
   /* map: scenarios x pillars */
   .ov .mapwrap {overflow-x: auto;}
+  /* evidence table: hairlines like the rest of the atlas, colour only in the numbers */
+  .ov table.et {width: 100%; min-width: 680px; border-collapse: collapse !important; border: none !important; table-layout: fixed;}
+  .ov table.et :is(th, td) {border: none !important; border-bottom: 1px solid var(--atlas-divider) !important;
+          background: transparent !important; padding: .55rem .6rem; vertical-align: middle;}
+  .ov table.et thead th {border-bottom: 2px solid var(--atlas-border) !important; text-align: left; vertical-align: bottom;}
+  .ov table.et th.rowh {text-align: left; width: 22%;}
+  .ov table.et th a {font-weight: 700; font-size: .95rem; text-decoration: none;}
+  .ov table.et th a:hover {text-decoration: underline;}
+  .ov table.et th span {display: block; font-weight: 400; font-size: .76rem; color: var(--atlas-muted); margin-top: .1rem;}
+  .ov table.et th small {display: block; font-weight: 400; font-size: .7rem; color: var(--atlas-note);}
+  .ov table.et th svg.teaser {margin: .4rem 0 .35rem; max-width: 9rem;}
+  .ov table.et th.corner {font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+          color: var(--atlas-muted); vertical-align: bottom;}
+  .ov table.et td {text-align: center; padding: 0;}
+  .ov table.et td a {display: block; padding: .8rem .3rem; text-decoration: none !important; border-radius: .3rem;}
+  .ov table.et td a:hover {background: var(--atlas-placeholder);}
+  .ov table.et td b {display: block; font-size: 1.4rem; font-weight: 600; line-height: 1.1;}
+  .ov table.et td span {font-size: .74rem; color: var(--atlas-muted);}
+  .ov table.et td span::before {content: "●"; margin-right: .3rem; font-size: .7rem;}
+  .ov table.et td.ok b, .ov table.et td.ok span::before {color: light-dark(#0b8a0b, #4ade80);}
+  .ov table.et td.warn b, .ov table.et td.warn span::before {color: light-dark(#b07d00, #e7b74a);}
+  .ov table.et td.bad b, .ov table.et td.bad span::before {color: light-dark(#c03535, #ff8091);}
   .ov .mapgrid {display: grid; grid-template-columns: 1.35fr repeat(5, minmax(6.4rem, 1fr)); gap: var(--gap); min-width: 720px;}
   .ov a.hcard {display: flex; flex-direction: column; gap: .2rem; padding: .6rem .65rem; line-height: 1.2;}
   .ov a.hcard b {color: var(--atlas-link); font-size: .95rem;}
@@ -468,37 +490,36 @@ def _cell(n, total, scenario, pillar):
     url = f"?page=scenario&scenario={quote(scenario)}&pillar={pillar}"
     title = escape(f"{n} of {total} {pillar} tests within ±{TOL_O2:g} pp O₂ and ±{TOL_KPA:g} kPa of {scenario}",
                    quote=True)
-    return (f"<a class='cell {state}' href='{url}' target='_self' title='{title}'>"
-            f"<span class='n'>{n}</span><span class='s'>{label}</span></a>")
+    return (f"<td class='{state}'><a href='{url}' target='_self' title='{title}'>"
+            f"<b>{n}</b><span>{label}</span></a></td>")
 
 
 def overview(df):
     gaps = _gaps(df)
     st.markdown(CSS, unsafe_allow_html=True)
 
-    # map: scenarios x pillars (CSS grid, every row the same height)
+    # evidence table: atmospheres across, pillars down
     head = "".join(
-        f"<a class='hcard' href='?page=scenario&scenario={quote(sc)}' target='_self' "
-        f"title='{escape(PRESETS[sc]['source'], quote=True)}'>"
-        f"<b>{short}</b><span>{PRESETS[sc]['o2']:g}% O₂ · {PRESETS[sc]['kpa'] / 6.895:.1f} psi</span>"
-        f"{mini_map(df, scenario=sc)}<em>{PRESETS[sc]['gravity']} gravity</em></a>"
+        f"<th><a href='?page=scenario&scenario={quote(sc)}' target='_self' "
+        f"title='{escape(PRESETS[sc]['source'], quote=True)}'>{short}</a>"
+        f"<span>{PRESETS[sc]['o2']:g}% O₂ · {PRESETS[sc]['kpa'] / 6.895:.1f} psi</span>"
+        f"<small>{PRESETS[sc]['gravity']} gravity</small></th>"
         for sc, short in COLUMNS)
     rows = []
     for pillar, name, question in PILLARS:
         exps = {"prevention": "BASS · BASS-II", "detection": "SAME · SAME-R", "suppression": "FLEX"}[pillar]
         n_p = int((df.pillar == pillar).sum())
-        rows.append(f"<a class='hcard' href='?page=scenario&pillar={pillar}' target='_self'>"
-                    f"<b>{name}</b><span>{question}</span>{mini_map(df, pillar=pillar, h=60)}"
-                    f"<em>{exps} · {n_p} tests</em></a>")
-        rows += [_cell(int(gaps[sc].loc[gaps[sc].pillar == pillar, "tests_near"].sum()),
-                       int(gaps[sc].loc[gaps[sc].pillar == pillar, "tests_total"].sum()), sc, pillar)
-                 for sc, _ in COLUMNS]
-    matrix = (f"<div class='mapwrap'><div class='mapgrid'><div class='kicker' style='align-self:end'>"
-              f"Pillar ↓ · Atmosphere →</div>{head}{''.join(rows)}</div></div>")
+        cells = "".join(_cell(int(gaps[sc].loc[gaps[sc].pillar == pillar, "tests_near"].sum()),
+                              int(gaps[sc].loc[gaps[sc].pillar == pillar, "tests_total"].sum()), sc, pillar)
+                        for sc, _ in COLUMNS)
+        rows.append(f"<tr><th class='rowh'><a href='?page=scenario&pillar={pillar}' target='_self'>{name}</a>"
+                    f"<span>{question}</span><small>{exps} · {n_p} tests</small></th>{cells}</tr>")
+    matrix = (f"<div class='mapwrap'><table class='et'><thead><tr><th class='corner'></th>"
+              f"{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>")
 
     st.markdown(f"""
 <div class='ov'>
-  {section(1, "What NASA has tested", "Tests run near each atmosphere. Click any box to go deeper.")}
+  {section(1, "What NASA has tested", "Number of tests run near each atmosphere. Click a name or a number to read the evidence.")}
   {matrix}
 
 </div>""", unsafe_allow_html=True)

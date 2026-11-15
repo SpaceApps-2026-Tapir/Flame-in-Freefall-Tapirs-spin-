@@ -234,9 +234,25 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
 <script>
 (() => {{
   const P = {params}, SERIF = "{serif.replace('"', "")}";
-  const C = P.dark ? {{bg: "#202735", ink: "#e8ecf2", soft: "#9aa3b2", faint: "#3a4558"}}
-                   : {{bg: "#ffffff", ink: "#1b1b1b", soft: "#6b6b6b", faint: "#e4e4e4"}};
-  const ACC = P.fuel === "Heptane" ? "#c4551f" : "#2a5fb0";              // one accent colour per fuel
+  // follow the page's theme live (also when it is switched from the app menu): read the app background
+  const THEMES = {{dark: {{bg: "#202735", ink: "#e8ecf2", soft: "#9aa3b2", faint: "#3a4558"}},
+                  light: {{bg: "#ffffff", ink: "#1b1b1b", soft: "#6b6b6b", faint: "#e4e4e4"}}}};
+  let C = THEMES[P.dark ? "dark" : "light"];
+  function readTheme() {{
+    try {{
+      const app = window.parent.document.querySelector('[data-testid="stApp"]') || window.parent.document.body;
+      const m = getComputedStyle(app).backgroundColor.match(/[\d.]+/g).map(Number);
+      const dark = (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) < 128;
+      C = Object.assign({{}}, THEMES[dark ? "dark" : "light"], {{bg: `rgb(${{m[0]}},${{m[1]}},${{m[2]}})`}});
+    }} catch (e) {{
+      C = THEMES[(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light"];
+    }}
+    const darkNow = C.ink === THEMES.dark.ink;
+    ACC = P.fuel === "Heptane" ? (darkNow ? "#ff9a5c" : "#c4551f") : (darkNow ? "#8ab8f5" : "#2a5fb0");
+    try {{ rp.style.color = C.soft; }} catch (e) {{}}   // the button may not exist yet on the first call
+  }}
+  readTheme(); setInterval(readTheme, 700);
+  let ACC = "#2a5fb0";                                                  // one accent colour per fuel, per theme
   const cv = document.getElementById("c"), x = cv.getContext("2d"), rp = document.getElementById("rp");
   rp.style.color = C.soft;
   let W, H;
@@ -362,7 +378,7 @@ def animation_html(sim, height=330, g=0.0, theme="light"):
     x.font = `italic 13px ${{SERIF}}`; x.fillStyle = C.soft;
     x.fillText(`t = ${{t.toFixed(1)}} s,  d = ${{d.toFixed(2)}} mm` + (speed > 1.05 ? `   (time ×${{speed.toFixed(1)}})` : ""), 12, 38);
     x.font = `13px ${{SERIF}}`; x.fillStyle = burning ? C.ink : (P.out ? "#1b7a55" : "#a8332b");
-    x.fillText(burning ? (P.out ? "burning… (this flame will go out by itself)" : "burning… (this flame will keep going)")
+    x.fillText(burning ? (P.out ? "burning · will go out by itself" : "burning · will keep going")
                        : (P.out ? "ending: self-extinguished" : "ending: fuel used up"), 12, H - 14);
     requestAnimationFrame(frame);
   }}
