@@ -1,23 +1,14 @@
-"""Explore the data visually: 3D chart + editable design matrix + analysis buttons + an assistant that drives them.
+"""Explore the data visually: charts, editable design matrix and local analysis buttons.
 
-Route: ?page=visual. The page, the buttons and the assistant all edit the same spec (lab_engine), so anything
-the assistant does can be undone or adjusted by hand, and vice versa.
+Route: ?page=visual. Chart controls and analysis buttons edit the same lab_engine spec.
 Written with AI assistance (Claude); see README "Use of AI".
 """
-import json
-import os
 
 import pandas as pd
 import streamlit as st
 
-import lab_agent
 import lab_engine as L
 
-EXAMPLES = [
-    "Where does a Moon base sit compared with every NASA test?",
-    "Which gas mixtures put droplet flames out?",
-    "Can smoke tell which material is burning?",
-]
 METHODS = {"conditions": "Real axes", "tsne": "Look-alike map"}
 
 
@@ -25,7 +16,6 @@ def _spec():
     if "lab_spec" not in st.session_state:
         st.session_state.lab_spec = L.default_spec("all")
         st.session_state.lab_mver = 0
-        st.session_state.lab_chat = []
         st.session_state.lab_result = None
     # arriving from the landing page / guide: ?page=visual&data=flex&chart=mixture&q=...
     qp = st.query_params
@@ -39,8 +29,6 @@ def _spec():
         st.session_state.lab_result = None
         if qp.get("o2") and qp.get("kpa"):  # arriving from the simulator: ring the burns closest to that flame
             _analyse("nearest_to_scenario", {"o2": qp["o2"], "kpa": qp["kpa"], "fuel": qp.get("fuel")})
-        if qp.get("q"):
-            st.session_state.lab_pending = qp["q"]
     return st.session_state.lab_spec
 
 
@@ -137,7 +125,7 @@ def advanced(spec):
 def matrix_editor(spec):
     st.markdown("##### Design matrix")
     st.caption("What goes into the look-alike map and every analysis. Tick a variable, give it more weight to make "
-               "it count more, or change its transform. The assistant edits this same table.")
+               "it count more, or change its transform.")
     df = pd.DataFrame(spec["matrix"])[["use", "label", "weight", "transform", "kind", "variable"]]
     edited = st.data_editor(
         df, key=f"dm_{spec['dataset']}_{st.session_state.lab_mver}", hide_index=True, width="stretch",
@@ -196,56 +184,6 @@ def show_result():
             st.dataframe(r["table"], hide_index=True, width="stretch", height=min(320, 38 + 35 * len(r["table"])))
 
 
-def assistant(spec):
-    st.markdown("##### Ask the assistant")
-    api_key = os.environ.get("GROQ_API_KEY", "")
-    model = os.environ.get("GROQ_AGENT_MODEL") or os.environ.get("GROQ_MODEL", "")
-    if not api_key or not model:
-        st.info("Set GROQ_API_KEY and GROQ_MODEL (a model with tool use) to talk to the assistant. "
-                "Everything else on this page works without it.")
-    box = st.container(height=470)
-    with box:
-        if not st.session_state.lab_chat:
-            st.caption("The assistant can change the design matrix, turn the chart and run analyses. Try:")
-            for ex in EXAMPLES:
-                if st.button(ex, key=f"ex_{hash(ex)}", width="stretch", disabled=not (api_key and model)):
-                    st.session_state.lab_pending = ex
-                    st.rerun()
-        for msg in st.session_state.lab_chat:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-                for a in msg.get("actions", []):
-                    if a["tool"] == "suggest_next" and a["ok"]:
-                        from guide import url
-                        params = {k: v for k, v in a["args"].items() if k not in ("label",) and v}
-                        st.markdown(f"<a href='{url(params)}' target='_self'>→ {a['args'].get('label', 'Go')}</a>",
-                                    unsafe_allow_html=True)
-                        continue
-                    args = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in a["args"].items())
-                    st.caption(("done: " if a["ok"] else "failed: ") + f"`{a['tool']}({args})`"
-                               + (f" — {a['error']}" if a.get("error") else ""))
-    q = st.chat_input("Ask about the data…", disabled=not (api_key and model), key="lab_input")
-    pending = st.session_state.pop("lab_pending", None)
-    if pending and not (api_key and model):
-        st.caption(f"You asked: “{pending}”. The chart above is the best starting view for it.")
-        pending = None
-    q = q or pending
-    if q:
-        hist = [{"role": m["role"], "content": m["content"]} for m in st.session_state.lab_chat]
-        st.session_state.lab_chat.append({"role": "user", "content": q})
-        with st.spinner("Working on the chart…"):
-            try:
-                new, reply, actions, results = lab_agent.run(spec, hist, q, api_key, model)
-                matrix_changed = new["matrix"] != spec["matrix"] or new["dataset"] != spec["dataset"]
-                _set(new, matrix_changed)
-                if results:
-                    st.session_state.lab_result = results[-1]
-                st.session_state.lab_chat.append({"role": "assistant", "content": reply or "Done.", "actions": actions})
-            except (ValueError, RuntimeError) as e:
-                st.session_state.lab_chat.append({"role": "assistant", "content": f"Error: {e}"})
-        st.rerun()
-
-
 # ------------------------------------------------------------------------------------------------ page
 def page(header=True):
     st.markdown("""
@@ -258,29 +196,22 @@ def page(header=True):
     if header:
         st.markdown("<a href='?' target='_self' style='text-decoration:none'>← Flame in Freefall</a>", unsafe_allow_html=True)
         st.markdown("<h1>Explore the data visually</h1>", unsafe_allow_html=True)
-        st.markdown("<div class='tagline'>Ask a question and the assistant picks the chart, or pick one yourself.</div>",
+        st.markdown("<div class='tagline'>Choose a dataset and chart, then explore with the controls below.</div>",
                     unsafe_allow_html=True)
 
     spec = _spec()
-    left, right = st.columns([2.3, 1], gap="large")
-    with left:
-        controls(spec)
-        spec = st.session_state.lab_spec
-        last = next((m for m in reversed(st.session_state.lab_chat) if m["role"] == "assistant"), None)
-        if last:
-            st.info(last["content"], icon=":material/lightbulb:")
-        try:
-            with st.spinner("Drawing…"):
-                fig = L.make_figure(spec)
-            st.plotly_chart(fig, theme="streamlit", width="stretch", key="lab_fig")
-            hl = spec.get("highlight")
-            st.caption(L.CHARTS[spec["chart"]][1] + f" · {len(L.filtered(spec))} tests"
-                       + (f" · rings: {hl['label']}" if hl and spec["chart"] in ("space", "similarity") else ""))
-        except ValueError as e:
-            st.warning(str(e))
-        camera_buttons(spec)
-        analysis_buttons(spec)
-        show_result()
-        advanced(st.session_state.lab_spec)
-    with right:
-        assistant(st.session_state.lab_spec)
+    controls(spec)
+    spec = st.session_state.lab_spec
+    try:
+        with st.spinner("Drawing…"):
+            fig = L.make_figure(spec)
+        st.plotly_chart(fig, theme="streamlit", width="stretch", key="lab_fig")
+        hl = spec.get("highlight")
+        st.caption(L.CHARTS[spec["chart"]][1] + f" · {len(L.filtered(spec))} tests"
+                   + (f" · rings: {hl['label']}" if hl and spec["chart"] in ("space", "similarity") else ""))
+    except ValueError as e:
+        st.warning(str(e))
+    camera_buttons(spec)
+    analysis_buttons(spec)
+    show_result()
+    advanced(st.session_state.lab_spec)

@@ -1013,7 +1013,7 @@ if page in ("ask", "scenario", "explore", "about"):
 elif page == "visual":
     from visual_lab import page as visual_page  # loaded lazily: scikit-learn only on this page
     page_header("visual", "Explore the data visually",
-                "Ask a question and the assistant picks the chart, or pick one yourself.")
+                "Choose a dataset and chart, then explore with the controls below.")
     visual_page(header=False)
     site_footer()
 else:
