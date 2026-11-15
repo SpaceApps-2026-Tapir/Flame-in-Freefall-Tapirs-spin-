@@ -4,13 +4,10 @@ enableCORS = true
 enableXsrfProtection = true
 enableStaticServing = false
 maxUploadSize = 10
+fileWatcherType = "poll"
 
 [browser]
 gatherUsageStats = false
 
 [client]
 showErrorDetails = "none"
-fileWatcherType = "poll"
-
-[browser]
-gatherUsageStats = false
