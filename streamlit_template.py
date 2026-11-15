@@ -809,7 +809,6 @@ def about_page():
             f"**{term('detection')}** ({term('SAME')}, {term('SAME-R')}) and **{term('suppression')}** ({term('FLEX')}). "
             "Words with a dotted underline show a short definition when you hover over them.",
             unsafe_allow_html=True)
-        placeholder("TODO [Pitch]: 2-3 sentence summary + key finding")
 
         h2("How to use it")
         st.markdown(
@@ -850,7 +849,7 @@ def about_page():
         h2("NASA documents indexed")
         inventory = cached_index_inventory()
         if not inventory:
-            st.caption("No PDF index is available yet. Run `python scripts/ingest_documents.py` to build it.")
+            st.caption("No PDF documents are available for search yet.")
         else:
             summary, rows = index_tables(inventory)
             st.markdown(f"The local search index contains **{len(rows)} PDFs** converted into "
@@ -860,8 +859,7 @@ def about_page():
             with st.expander("See the PDFs in the index"):
                 st.markdown(index_pdf_html(rows), unsafe_allow_html=True)
                 st.caption("Click a PDF title to open it in a new tab.")
-            st.caption("Topics come from the experiment recorded in `documents/manifest.csv`; PDFs without "
-                       "a single experiment are grouped as background / cross-cutting.")
+            st.caption("PDFs without a single experiment are grouped as background / cross-cutting.")
 
         h2("Experiments")
         for name, pillar_label, desc, experiments in [
@@ -883,20 +881,14 @@ def about_page():
                     if len(experiments) > 1:
                         st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
                     render_references(experiment)
-                placeholder("TODO: summary card, key findings with page citations, small chart")
-
-        h2("Applications on Earth")
-        placeholder("TODO [Pitch]: NASA spinoffs: firefighter air tanks, smoke detector, protective clothing")
 
         h2("Methodology and use of AI")
         st.markdown(
-            f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102, "
-            "built with `build_master.py`.\n"
+            f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102.\n"
             f"- **Ranking:** distance on O₂ and pressure ({term('relevance')}, {term('weights', 'weight')} and "
             f"{term('tolerances', 'tolerance')} in the scenario report).\n"
             f"- **{term('Outcome', 'outcome')} categories** for BASS/BASS-II are our reading of crew notes; "
-            "the original note is always shown.\n"
-            "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
+            "the original note is always shown.", unsafe_allow_html=True)
 
         h2("References")
         st.markdown("Datasets and reports used by this atlas, in IEEE style. Dataset DOIs resolve to the canonical "
@@ -907,9 +899,6 @@ def about_page():
             if references_for(experiment):
                 st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
                 number = render_references(experiment, show_citation=True, start=number)
-        st.caption("Reference metadata is maintained in `references.csv` and linked to experiments in "
-                   "`experiment_references.csv`. See `THIRD_PARTY_NOTICES.md` for the full license audit. "
-                   "Row-level provenance remains visible in the test details.")
 
 
 # ====================================================================== DATA EXPLORER (pick columns → filter → results)
