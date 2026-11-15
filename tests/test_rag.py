@@ -97,6 +97,47 @@ class RetrievalTests(unittest.TestCase):
             self.assertIn("not contain enough evidence", answer("q", [{}], {}, "key", "model"))
             self.assertEqual(generate.call_count, 1)
 
+    def test_request_uses_temperature_zero(self):
+        with patch("rag._generate", return_value="Supported [S1]") as generate:
+            answer("q", [{"text": "evidence"}], {}, "key", "model")
+        self.assertEqual(generate.call_args.args[0]["temperature"], 0)
+
+    def test_answer_citing_only_a_context_test_is_accepted(self):
+        context = {"ranked_tests": [{"experiment": "FLEX", "test_id": "219F001"}], "gaps": []}
+        with patch("rag._generate", return_value="The closest test is FLEX 219F001.") as generate:
+            self.assertEqual(answer("q", [{}], context, "key", "model"), "The closest test is FLEX 219F001.")
+            self.assertEqual(generate.call_count, 1)
+
+    def test_word_same_is_not_the_same_experiment(self):
+        from vector_store import experiments_in
+        self.assertEqual(experiments_in("Is extinction the same at high oxygen?")[0], set())
+        self.assertEqual(experiments_in("What did SAME and SAME-R measure?")[0], {"SAME", "SAME-R"})
+        self.assertEqual(experiments_in("bass-ii vs Flex")[0], {"BASS-II", "FLEX"})
+
+    def test_reference_lists_are_detected(self):
+        from vector_store import is_reference_list
+        self.assertTrue(is_reference_list("1Bukowski, R.W. and G.W. Mulholland, 1978. 2Bukowski, R. W, R. D. Peacock"))
+        self.assertTrue(is_reference_list("12. Olson, Sandra L.; Ferkul, Paul V. 13. Ito, Akihiko; and Kashiwagi"))
+        self.assertFalse(is_reference_list("The flame spread at 21% O2 and went out when the flow was reduced."))
+
+    def test_short_last_chunk_of_a_page_is_kept_with_its_neighbour(self):
+        from vector_store import search
+        collection = MagicMock()
+        collection.count.return_value = 2
+        metadata = [{"title": "Report", "document_id": "doc", "page": 4}] * 2
+        documents = ["Tests were performed aboard the ISS in the wind tunnel. " * 4, "tests varying oxygen below 21%"]
+        collection.query.return_value = {"ids": [["1", "0"]], "distances": [[0.1, 0.3]]}
+        collection.get.return_value = {"ids": ["0", "1"], "documents": documents, "metadatas": metadata}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("vector_store.client_and_embedding", return_value=(client, None)):
+                matches = search("oxygen", path=path)
+        self.assertEqual(len(matches), 1)
+        self.assertIn("varying oxygen", matches[0]["text"])
+
     def test_provider_error_does_not_expose_credentials(self):
         from urllib.error import HTTPError
         with patch("rag.urlopen", side_effect=HTTPError("url", 401, "secret", {}, None)):

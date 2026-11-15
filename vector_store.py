@@ -13,9 +13,10 @@ _EXPERIMENT_ANY_CASE = re.compile(r"\b(?:BASS-II|BASS|SAME-R|FLEX)\b", re.I)
 _EXPERIMENT_SAME = re.compile(r"\bSAME\b(?!-R)")
 
 # Bibliography chunks match questions through paper titles but contain no evidence.
-_CITATION = re.compile(r"\bet al\b|\bvol\.\s*\d|\bpp\.\s*\d|\bProc\.|\bno\.\s*\d|\bdoi\b|Conference on"
-                       r"|\b\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]")
-_REFERENCE_ENTRY = re.compile(r"\b\d{1,3}\.\s+[A-Z][a-z]+,\s+[A-Z]")
+# A reference entry is a number, then "Surname, I": "12. Olson, S" or "2Bukowski, R" (SAME reports).
+_REFERENCE_ENTRY = re.compile(r"\b\d{1,3}\.?\s*[A-Z][a-z]+,\s+[A-Z]")
+_CITATION = re.compile(r"\bet al\b|\bvol\.\s*\d|\bpp\.\s*\d|\bProc\.|\bno\.\s*\d|\bdoi\b|Conference on|"
+                       + _REFERENCE_ENTRY.pattern)
 
 
 def experiments_in(question):
@@ -105,11 +106,15 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
         if score:
             lexical.append((ident, score))
     lexical.sort(key=lambda pair: pair[1], reverse=True)
+    # One or two common words ("What is oxygen?") barely separate passages, so their keyword ranking is
+    # mostly noise: off for one word, half for two, full from three words up or when a word is rare (SIBAL).
+    rare = any(0 < frequencies[word] <= 0.01 * len(counts) for word in query_terms)
+    lexical_weight = 1.0 if rare else {0: 0.0, 1: 0.0, 2: 0.5}.get(len(query_terms), 1.0)
     scores = {}
     distances = dict(zip(result["ids"][0], result["distances"][0]))
-    for ranking in (result["ids"][0], [ident for ident, _ in lexical[:40]]):
+    for ranking, weight in ((result["ids"][0], 1.0), ([ident for ident, _ in lexical[:40]], lexical_weight)):
         for position, ident in enumerate(ranking):
-            scores[ident] = scores.get(ident, 0) + 1 / (60 + position)
+            scores[ident] = scores.get(ident, 0) + weight / (60 + position)
     records = {ident: (text, metadata) for ident, text, metadata in
                zip(corpus["ids"], corpus["documents"], corpus["metadatas"])}
     passages = []
@@ -119,14 +124,11 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
         distance = distances.get(ident)
         if max_distance is not None and (distance is None or distance > max_distance):
             continue
-        if len(text.split()) < 25:
-            continue
         if re.search(r"\.{6,}", text) or is_reference_list(text):
             continue  # Tables of contents and reference lists point to evidence but contain none.
         page_key = (metadata.get("document_id", metadata.get("title")), metadata["page"])
         if page_key in pages_seen:
             continue
-        pages_seen.add(page_key)
         # Join adjacent overlapping chunks from the same PDF page for context.
         neighbours = [(other_id, other_text) for other_id, (other_text, other_meta) in records.items()
                       if other_meta.get("document_id", other_meta.get("title")) == page_key[0]
@@ -134,8 +136,12 @@ def search(question, limit=5, path=STORE, embedding_function=None, max_distance=
                       and abs(int(other_id) - int(ident)) <= 1
                       and (other_id == ident or not is_reference_list(other_text))]
         neighbours.sort(key=lambda item: int(item[0]))
-        passages.append({**metadata, "text": "\n".join(t for _, t in neighbours),
-                         "retrieval_score": scores[ident]})
+        joined = "\n".join(t for _, t in neighbours)
+        # Judge length after joining: the short last chunk of a page often holds the best match.
+        if len(joined.split()) < 25:
+            continue  # title slides and captions
+        pages_seen.add(page_key)
+        passages.append({**metadata, "text": joined, "retrieval_score": scores[ident]})
         if len(passages) >= limit:
             break
     return passages
