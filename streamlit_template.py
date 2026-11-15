@@ -799,6 +799,10 @@ def index_pdf_html(rows):
             f"<tbody>{body}</tbody></table>")
 
 
+TEAM = ["Patrick Hugo Nepveu Nelson", "Lesmes Torres González", "Xavier Barrios Salazar",
+        "Fabian Gómez Quesada", "Andrés Bonilla Blanco"]
+
+
 def about_page():
     page_header("about", "About this atlas",
                 "What Flame in Freefall does, how to read it, and where its data comes from.")
@@ -814,6 +818,9 @@ def about_page():
     <tr><th>Gravity tested</th><td>{', '.join(term(g) for g in sorted(df.gravity.unique()))}</td></tr>
   </table>
 </div>""", unsafe_allow_html=True)
+        st.markdown("<div class='infobox' style='margin-top:1rem'><span class='ib-title'>Team</span>"
+                    + "".join(f"<div style='padding:.2rem .3rem; border-top:1px solid var(--atlas-divider)'>{name}</div>"
+                              for name in TEAM) + "</div>", unsafe_allow_html=True)
 
     with main:
         h2("What it does")
@@ -898,7 +905,7 @@ def about_page():
                         st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
                     render_references(experiment)
 
-        h2("Methodology and use of AI")
+        h2("Methodology")
         st.markdown(
             f"- **Data:** 678 tests from {term('PSI', 'psi_db')}-25, PSI-26, PSI-69, PSI-101, PSI-102.\n"
             f"- **Ranking:** distance on O₂ and pressure ({term('relevance')}, {term('weights', 'weight')} and "

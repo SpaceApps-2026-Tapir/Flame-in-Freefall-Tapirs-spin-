@@ -154,8 +154,8 @@ def hero(df):
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(f"""
 <div class='thesis'>
-  <p>A Moon base will breathe <b>30–34% oxygen</b>. In that air, a fire may burn until its fuel is gone.
-  NASA has never tested how solid materials burn there.</p>
+  <p>A Moon base is expected to breathe <b>30–34% oxygen</b>, far more than the 21% of Earth's air.
+  None of NASA's ISS microgravity tests in this atlas burned a solid material in that air.</p>
   <div class='chips'>
     <span class='chip'><b>{len(df)}</b> NASA fire tests on the ISS</span>
     <span class='chip red'><b>{solids_moon}</b> with solids in Moon-base air</span>
@@ -192,7 +192,7 @@ def self_extinction():
     rng = np.random.default_rng(0)
     curves = {f: [] for f, _ in FUELS}
     o50 = {f: [] for f, _ in FUELS}
-    for i in range(400):  # bootstrap
+    for i in range(100):  # bootstrap (100 resamples keep the first page load fast)
         s = d if i == 0 else d.sample(len(d), replace=True, random_state=int(rng.integers(1e9)))
         m = model().fit(s[FEATS], s.y)
         c, b = dict(zip(FEATS, m.coef_[0])), m.intercept_[0]
@@ -229,8 +229,9 @@ def _set_air(which):
         st.session_state[f"fl_{k}"] = v
 
 
-OUTCOME_COLORS = {"went out by itself": "#1baf7a", "kept burning to the end": "#eda100", "droplet burst": "#eb6834"}
-END_LABEL = {"extinction": "went out by itself", "completion": "kept burning to the end", "disruption": "droplet burst"}
+# "completion" is NASA's own FLEX test-end label; its meaning is unconfirmed (some have an extinction diameter).
+OUTCOME_COLORS = {"went out by itself": "#1baf7a", "ended as 'completion'": "#eda100", "droplet burst": "#eb6834"}
+END_LABEL = {"extinction": "went out by itself", "completion": "ended as 'completion'", "disruption": "droplet burst"}
 
 
 def _burn_flow_fig(sim, match):
@@ -296,7 +297,8 @@ def fire_lab_block():
     c = st.columns([1, 1.4, 1.4, 1.4, 1.4])
     fuel = c[0].radio("Fuel", ["Methanol", "Heptane"], key="fl_fuel")
     o2 = c[1].slider("Oxygen (%)", 12.0, 34.0, step=0.5, key="fl_o2")
-    kpa = c[2].slider("Pressure (kPa)", 50.0, 110.0, step=0.5, key="fl_kpa")
+    kpa = c[2].slider("Pressure (kPa)", 70.0, 110.0, step=0.5, key="fl_kpa",
+                      help="FLEX has no valid burns below 70.2 kPa, so the slider starts there.")
     co2 = c[3].slider("CO₂ added (%)", 0.0, 60.0, step=1.0, key="fl_co2", help="A suppressant gas mixed into the air.")
     d0 = c[4].slider("Droplet size (mm)", 1.5, 4.5, step=0.1, key="fl_d0")
 
@@ -342,7 +344,7 @@ def fire_lab_block():
     cert["says"] = ("goes out by itself before the fuel is gone" if cert["says"] == "goes out by itself"
                     else "keeps burning until the fuel is gone")
     match = sim.matching(fuel, o2, co2, kpa)
-    ends = {"extinction": "went out by itself", "disruption": "the droplet burst", "completion": "burned to the end"}
+    ends = {"extinction": "went out by itself", "disruption": "the droplet burst", "completion": "ended as 'completion'"}
     if len(match):
         tally = match.test_end.map(ends).value_counts()
         nasa = (f"NASA ran <b>{len(match)}</b> {fuel.lower()} burns in this air: "
@@ -357,8 +359,7 @@ def fire_lab_block():
                  "numbers still come from microgravity burns.")
     else:
         gnote = (f" <br><b>{grav.split(' (')[0]} gravity has never been tested in these experiments:</b> the drawing "
-                 "shows hot gas starting to rise, but every number comes from microgravity burns. Short ground "
-                 "experiments in simulated partial gravity found some materials burn at lower oxygen than on Earth.")
+                 "shows hot gas starting to rise, but every number comes from microgravity burns.")
     st.markdown(f"""<div class='ov tight'><div class='verdict'>
   The model says your flame <b>{cert['says']}</b>, with <b>{cert['certainty']:.0%} certainty</b>.
   On the {cert['k']} most similar NASA burns it was right <b>{cert['local_accuracy']:.0%}</b> of the time.
@@ -381,8 +382,12 @@ def fire_lab_block():
     m, h = r["Methanol"]["o50"], r["Heptane"]["o50"]
     with st.expander("How this works"):
         st.markdown(f"""
-* Half of NASA's methanol flames put themselves out below **{m[1]:.0f}% O₂** ({m[0]:.0f}–{m[2]:.0f}%), heptane below
-  **{h[1]:.0f}%** ({h[0]:.0f}–{h[2]:.0f}%). In Moon-base air, **{r['moon_ext']} of {r['moon_n']}** NASA burns went out by themselves.
+* The model estimates that below about **{m[1]:.0f}% O₂** ({m[0]:.0f}–{m[2]:.0f}%) a methanol flame is more likely
+  than not to go out by itself, and below **{h[1]:.0f}%** ({h[0]:.0f}–{h[2]:.0f}%) for heptane, at 101.3 kPa with no
+  suppressant and a median-size droplet (90% bootstrap intervals). This is a model estimate, not a count of burns.
+  In Moon-base air, **{r['moon_ext']} of {r['moon_n']}** NASA burns went out by themselves.
+* "Completion" is NASA's own FLEX test-end label. Its exact meaning is still to be confirmed: some of these burns
+  have an extinction diameter recorded, so they did not all burn to the end.
 * Curve and star: a logistic model trained on {r['n']} FLEX droplet burns (cross-validated AUC {r['auc']:.2f}).
   Faded dots: NASA's measured share at 101 kPa with no suppressant.
 * The burn follows the d² law: the droplet diameter squared shrinks at a steady rate learned from FLEX.
