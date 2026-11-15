@@ -122,7 +122,7 @@ they do not apply to this app's local, in-process index.
 
 ## Team members
 
-- Andres Blanco
+- Andres Bonilla 
 - Fabian Gomez
 - Lesmes Torres
 - Patrick Nepveu
