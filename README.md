@@ -183,6 +183,48 @@ If you see `No module named 'evidence'`, check step 3. If the error mentions
 
 With `uv run`, you do not need to activate the environment manually. Track `pyproject.toml` and `uv.lock` in Git, and add `.venv/` to `.gitignore`. See the [official project guide](https://docs.astral.sh/uv/guides/projects/) for more details.
 
+## Run with Docker
+
+The image uses Astral's official `uv` image with Python 3.14 and installs exactly
+what `uv.lock` pins. `evidence.py` and `master_tests.csv` must be in the repository
+root before building (see step 3), because they are copied into the image.
+
+```bash
+docker compose up --build      # build and start → http://localhost:8501
+docker compose up -d           # start in the background
+docker compose logs -f         # follow logs
+docker compose down            # stop
+```
+
+Without Compose:
+
+```bash
+docker build -t flame-in-freefall .
+docker run --rm -p 8501:8501 flame-in-freefall
+```
+
+API keys (e.g. for the AI assistant) go in a `.env` file next to `compose.yaml`;
+it is git-ignored and loaded automatically. After changing dependencies with
+`uv add`, rebuild with `docker compose up --build`.
+
+## Explore the data visually (`?page=visual`, "Explore visually" in the top bar)
+
+3D view of the tests (real axes, PCA, UMAP or t-SNE), an editable **design matrix** (which variables enter
+the analysis, their weight and transform), one-click analyses (PCA drivers, clusters, outliers, tests nearest
+a scenario, correlations, what predicts a category) and an assistant that drives all of it through tool calls.
+
+- Engine: `lab_engine.py` (no Streamlit, no LLM). Agent: `lab_agent.py`. Page: `visual_lab.py`.
+- The assistant uses the same Groq key: `GROQ_API_KEY`, and `GROQ_AGENT_MODEL` (falls back to `GROQ_MODEL`).
+  The model must support tool use. Without a key, the rest of the page still works.
+- Raw FLEX/SAME tables: `python scripts/extract_raw_data.py "<NASA RESOURCES>" data/raw`.
+- Tests: `uv run python -m unittest tests.test_lab`.
+
+## Landing and simulator
+
+The home page tells one story under the search box: (1) what NASA has tested, (2) what the data reveals
+(flames stop putting themselves out as oxygen rises), (3) a droplet-burn simulator compared with a real NASA
+burn, (4) what to test next. Code: `story.py`, `sim.py`.
+
 ## License
 
 The original code, documentation and the logo in this repository are licensed
