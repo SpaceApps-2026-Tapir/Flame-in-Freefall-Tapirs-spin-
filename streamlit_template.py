@@ -336,11 +336,9 @@ def show_answer(last):
         alert("bad", escape(last["error"]), label="Error")
     elif last["text"] in (NO_EVIDENCE, NO_PASSAGES):
         alert("info", "<b>The retrieved passages do not provide enough evidence to answer this question.</b> "
-                      "Other pages or documents may contain the answer. General definitions can be answered "
-                      "when the retrieved sources explain them.<br>"
-                      "Try naming an experiment, a material or a condition, for example: <i>Which materials "
-                      "had the highest flame spread rate in BASS-II?</i> or <i>How did oxygen concentration "
-                      "change flame spread over PMMA?</i>", label="No answer")
+                      "Other pages or documents may contain the answer. Try one of the suggested questions below.",
+                      label="No answer")
+        return
     elif last["text"]:
         with st.container(border=True):
             st.markdown(display_text)
@@ -361,6 +359,12 @@ def select_example(question):
     """Update the question before Streamlit renders the form again."""
     st.session_state["ask_question"] = question
     st.query_params["q"] = question
+
+
+def suggested_questions():
+    st.markdown("**Not sure what to ask? Try one of these:**")
+    for i, example in enumerate(EXAMPLES):
+        st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
 
 
 def ask_page():
@@ -397,12 +401,12 @@ def ask_page():
         st.session_state["ask_result"] = last
 
     if not question or last is None or last["question"] != question:
-        st.markdown("**Not sure what to ask? Try one of these:**")
-        for i, example in enumerate(EXAMPLES):
-            st.button(example, key=f"example_{i}", on_click=select_example, args=(example,))
+        suggested_questions()
         return
 
     show_answer(last)
+    if not last["error"] and last["text"] in (NO_EVIDENCE, NO_PASSAGES):
+        suggested_questions()
     if preset:
         st.markdown(f"<a href='{carry(page='scenario')}' target='_self'>See the full scenario report for "
                     f"{escape(preset)} →</a>", unsafe_allow_html=True)
