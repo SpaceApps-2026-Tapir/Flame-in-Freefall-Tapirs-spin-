@@ -12,6 +12,7 @@ tests all drive the same functions:
 The design matrix is a table with one row per variable: use it or not, its weight, and its transform.
 Written with AI assistance (Claude); see README "Use of AI".
 """
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -89,8 +90,8 @@ DATASETS = {
 CHARTS = {
     "space": ("Conditions in 3D", "Each dot is a test, placed by the conditions it ran at. The red box is the "
                                   "Moon-habitat range."),
-    "similarity": ("Look-alike map", "Tests that ran under similar conditions sit together; far-apart islands "
-                                     "share little. Distances between islands mean little."),
+    "similarity": ("Look-alike map", "Tests that ran under similar conditions sit together. Each axis is named "
+                                     "after the quantities it follows most; distances between far islands mean little."),
     "flows": ("From conditions to outcome", "Each band follows a group of tests from oxygen and pressure "
                                             "to fuel and to what the flame did. Wider band = more tests."),
     "paths": ("Every test as a line", "Each line is one test, crossing every measured quantity. Drag along an "
@@ -100,8 +101,8 @@ CHARTS = {
     "evidence": ("Where the evidence is", "Click a ring to zoom in: pillar → experiment → fuel → outcome. "
                                           "Size = number of tests."),
 }
-CHARTS_FOR = {"all": ["space", "flows", "evidence", "paths", "similarity"],
-              "flex": ["space", "mixture", "paths", "similarity"],
+CHARTS_FOR = {"all": ["flows", "space", "evidence", "similarity", "paths"],
+              "flex": ["mixture", "space", "similarity", "paths"],
               "same": ["space", "paths", "similarity"]}
 ANALYSIS_TITLES = {"pca_loadings": "What drives the differences", "kmeans": "Natural groups",
                    "outliers": "Unusual tests", "nearest_to_scenario": "Closest real tests",
@@ -147,12 +148,12 @@ def default_spec(dataset="all"):
         dataset=dataset,
         matrix=default_matrix(dataset),
         filters={},                       # {column: [allowed values]} or {column: [min, max]}
-        chart="space",                    # one of CHARTS_FOR[dataset]
-        method="conditions",              # conditions (real axes) | pca | umap | tsne
+        chart={"all": "flows", "flex": "mixture", "same": "space"}[dataset],  # open on the most telling chart
+        method="conditions",              # conditions (real axes) | tsne (look-alike map)
         xyz=list(c["default_xyz"]),
-        color=next(iter(c["color"])),
+        color="outcome_group" if dataset == "all" else next(iter(c["color"])),
         camera=dict(azimuth=45.0, elevation=25.0, distance=2.0),
-        umap=dict(n_neighbors=15, min_dist=0.3),
+        perplexity=30,
         highlight=None,                   # {"label": str, "index": [row ids]}
         scenario=MOON if c["o2"] else None,
         extra={},                         # columns produced by analyses (cluster, outlier...)
@@ -207,28 +208,59 @@ def design_matrix(spec, d=None):
     return np.hstack(blocks), names
 
 
+def axis_names(emb, d, numeric_labels, categorical=(), min_r=0.35):
+    """Name each map axis after what it follows most (rank correlation), e.g. 'more oxygen →'.
+
+    Candidates are the numeric quantities and, for categorical columns, one indicator per value
+    ('more liquid fuel droplet tests'). Each axis is led by a different candidate when possible."""
+    cands = {}
+    for col, lab in numeric_labels.items():
+        if col in d and d[col].notna().sum() > 10 and d[col].nunique() > 2:
+            cands[lab.split(" (")[0]] = pd.to_numeric(d[col], errors="coerce")
+    for col in categorical:
+        if col in d:
+            vals = list(d[col].dropna().astype(str).value_counts().index[:6])
+            for val in vals[:1] if len(vals) == 2 else vals:  # a two-value category needs only one indicator
+                if val.lower() in ("not stated", "unknown", "nan", "other", "none"):
+                    continue
+                cands["@" + re.sub(r"\s*\(.*?\)", "", val)] = (d[col].astype(str) == val).astype(float)
+    names, used_first = [], set()
+    for i in range(emb.shape[1]):
+        axis = pd.Series(emb[:, i], index=d.index)
+        r = {}
+        for lab, x in cands.items():
+            v = axis.corr(x, method="spearman")
+            if pd.notna(v):
+                r[lab] = v
+        ranked = [(k, v) for k, v in sorted(r.items(), key=lambda kv: -abs(kv[1])) if abs(v) >= min_r]
+        # lead each axis with a quantity no other axis leads with, so the three names differ
+        fresh = [kv for kv in ranked if kv[0] not in used_first]
+        top = fresh[:1] or ranked[:1]
+        if top:
+            used_first.add(top[0][0])
+        if not top:
+            names.append("mixed conditions")
+            continue
+        k, v = top[0]
+        if k.startswith("@"):  # a category: point to the end of the axis where it sits
+            k = "@" + (k[1:] if len(k) <= 22 else k[1:21].rsplit(" ", 1)[0] + "…")
+            names.append(f"{k[1:]} →" if v > 0 else f"← {k[1:]}")
+        else:
+            names.append(f"{'more' if v > 0 else 'less'} {k.lower()} →")
+    return names
+
+
 def embedding(spec, d=None):
     d = filtered(spec) if d is None else d
     m = spec["method"]
     if m == "conditions":
         return d[spec["xyz"]].to_numpy(dtype=float), [labels(spec["dataset"]).get(v, v) for v in spec["xyz"]]
     X, names = design_matrix(spec, d)
-    if m == "pca":
-        p = PCA(n_components=min(3, X.shape[1]), random_state=SEED).fit(X)
-        e = p.transform(X)
-        if e.shape[1] < 3:
-            e = np.hstack([e, np.zeros((len(e), 3 - e.shape[1]))])
-        return e, [f"PC{i + 1} ({v:.0%})" for i, v in enumerate(p.explained_variance_ratio_)] + ["—"] * (3 - p.n_components_)
-    if m == "umap":
-        import umap
-        u = spec["umap"]
-        e = umap.UMAP(n_components=3, n_neighbors=int(min(u["n_neighbors"], len(X) - 1)),
-                      min_dist=float(u["min_dist"]), random_state=SEED).fit_transform(X)
-        return e, ["UMAP 1", "UMAP 2", "UMAP 3"]
-    if m == "tsne":
-        from sklearn.manifold import TSNE
-        e = TSNE(n_components=3, perplexity=min(30, len(X) // 4), random_state=SEED, init="pca").fit_transform(X)
-        return e, ["t-SNE 1", "t-SNE 2", "t-SNE 3"]
+    from sklearn.manifold import TSNE
+    perp = float(spec.get("perplexity", 30))
+    e = TSNE(n_components=3, perplexity=min(perp, (len(X) - 1) / 3), random_state=SEED, init="pca").fit_transform(X)
+    cfg = DATASETS[spec["dataset"]]
+    return e, axis_names(e, d, cfg["numeric"], [r["variable"] for r in used(spec, "category")])
     raise ValueError(f"Unknown method {m}")
 
 
@@ -422,6 +454,18 @@ def _a_outliers(spec, d, params):
 
 
 def _a_nearest(spec, d, params):
+    if params.get("o2") is not None and params.get("kpa") is not None:  # a flame from the simulator
+        cfg = DATASETS[spec["dataset"]]
+        if not cfg["o2"]:
+            raise ValueError("This dataset has no oxygen/pressure.")
+        o2, kpa = float(params["o2"]), float(params["kpa"])
+        pool = d[d["fuel"] == params["fuel"]] if params.get("fuel") and "fuel" in d else d
+        dist = np.hypot((pool[cfg["o2"]] - o2) / 3, (pool[cfg["kpa"]] - kpa) / 10)
+        near = pool.assign(distance=dist.round(3)).sort_values("distance").head(int(params.get("n", 15)))
+        spec["highlight"] = dict(label="Closest to your flame", index=near.index.tolist())
+        cols = [c for c in cfg["hover"] if c in near] + ["distance"]
+        return dict(summary=f"{len(near)} NASA burns closest to your flame ({o2:g}% O₂, {kpa:g} kPa).",
+                    table=near[cols])
     scen = params.get("scenario") or spec.get("scenario") or MOON
     if spec["dataset"] != "all":
         cfg = DATASETS[spec["dataset"]]
@@ -558,11 +602,11 @@ def apply_tool(spec, tool, args):
                 spec["color"] = "outcome_group"  # the last band should be what the flame did
             if args["chart"] == "space":
                 spec["method"] = "conditions"
-            elif args["chart"] == "similarity" and spec["method"] == "conditions":
-                spec["method"] = "umap"
+            elif args["chart"] == "similarity":
+                spec["method"] = "tsne"
         if args.get("method"):
-            if args["method"] not in ("conditions", "pca", "umap", "tsne"):
-                raise ValueError("method must be conditions, pca, umap or tsne")
+            if args["method"] not in ("conditions", "tsne"):
+                raise ValueError("method must be conditions or tsne")
             spec["method"] = args["method"]
             if not args.get("chart"):
                 spec["chart"] = "space" if args["method"] == "conditions" else "similarity"
@@ -594,10 +638,8 @@ def apply_tool(spec, tool, args):
             moved = True
         if moved:
             spec["version"] += 1
-        if args.get("umap_neighbors"):
-            spec["umap"]["n_neighbors"] = int(np.clip(args["umap_neighbors"], 3, 100))
-        if args.get("umap_min_dist") is not None:
-            spec["umap"]["min_dist"] = float(np.clip(args["umap_min_dist"], 0, 0.99))
+        if args.get("perplexity"):
+            spec["perplexity"] = float(np.clip(args["perplexity"], 5, 50))
         if args.get("clear_highlight"):
             spec["highlight"] = None
     else:

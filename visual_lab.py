@@ -15,12 +15,10 @@ import lab_engine as L
 
 EXAMPLES = [
     "Where does a Moon base sit compared with every NASA test?",
-    "What happens to the flame as oxygen goes up?",
     "Which gas mixtures put droplet flames out?",
-    "Where is the evidence thin?",
     "Can smoke tell which material is burning?",
 ]
-METHODS = {"conditions": "Real axes", "pca": "PCA", "umap": "UMAP", "tsne": "t-SNE"}
+METHODS = {"conditions": "Real axes", "tsne": "Look-alike map"}
 
 
 def _spec():
@@ -31,7 +29,7 @@ def _spec():
         st.session_state.lab_result = None
     # arriving from the landing page / guide: ?page=visual&data=flex&chart=mixture&q=...
     qp = st.query_params
-    key = (qp.get("data"), qp.get("chart"), qp.get("q"))
+    key = (qp.get("data"), qp.get("chart"), qp.get("q"), qp.get("o2"), qp.get("kpa"), qp.get("fuel"))
     if any(key) and st.session_state.get("lab_qp") != key:
         st.session_state.lab_qp = key
         spec = L.default_spec(qp.get("data")) if qp.get("data") in L.DATASETS else st.session_state.lab_spec
@@ -39,6 +37,8 @@ def _spec():
             spec = L.apply_tool(spec, "set_view", {"chart": qp["chart"]})
         _set(spec, matrix_changed=True)
         st.session_state.lab_result = None
+        if qp.get("o2") and qp.get("kpa"):  # arriving from the simulator: ring the burns closest to that flame
+            _analyse("nearest_to_scenario", {"o2": qp["o2"], "kpa": qp["kpa"], "fuel": qp.get("fuel")})
         if qp.get("q"):
             st.session_state.lab_pending = qp["q"]
     return st.session_state.lab_spec
@@ -123,21 +123,11 @@ def advanced(spec):
                 if v != spec["xyz"][i]:
                     changes[k] = v
         if spec["chart"] == "similarity":
-            a, b_, c_ = st.columns(3)
-            m = a.radio("Map method", ["umap", "tsne", "pca"], ["umap", "tsne", "pca"].index(spec["method"])
-                        if spec["method"] in ("umap", "tsne", "pca") else 0, format_func=METHODS.get, horizontal=True)
-            if m != spec["method"]:
-                changes["method"] = m
-                changes["chart"] = "similarity"
-            if spec["method"] == "umap":
-                nn = b_.slider("Neighbours", 3, 60, int(spec["umap"]["n_neighbors"]),
-                               help="Low = fine local detail and many islands; high = broad structure.")
-                md = c_.slider("Minimum distance", 0.0, 0.95, float(spec["umap"]["min_dist"]), 0.05,
-                               help="Low = tight clumps; high = evenly spread points.")
-                if nn != spec["umap"]["n_neighbors"]:
-                    changes["umap_neighbors"] = nn
-                if md != spec["umap"]["min_dist"]:
-                    changes["umap_min_dist"] = md
+            pp = st.slider("Neighbourhood size", 5, 50, int(spec.get("perplexity", 30)),
+                           help="How many neighbours each test looks at when placing itself. Low = many small "
+                                "islands; high = broader groups.")
+            if pp != spec.get("perplexity", 30):
+                changes["perplexity"] = pp
         if changes:
             _do("set_view", changes)
             st.rerun()
@@ -176,22 +166,22 @@ def matrix_editor(spec):
 
 
 def analysis_buttons(spec):
-    st.markdown("##### Look deeper")
-    b = st.columns(3) + st.columns(3)
-    k = st.session_state.get("lab_k", 4)
-    if b[0].button("What drives it", width="stretch", help="Which variables drive the main directions of variation"):
-        _analyse("pca_loadings")
-    if b[1].button(f"Natural groups ({k})", width="stretch"):
-        _analyse("kmeans", {"k": k})
-    if b[2].button("Unusual tests", width="stretch"):
-        _analyse("outliers", {"fraction": 0.05})
-    if b[3].button("Closest to Moon base", width="stretch", disabled=L.DATASETS[spec["dataset"]]["o2"] is None):
-        _analyse("nearest_to_scenario", {"scenario": L.MOON})
-    if b[4].button("What moves together", width="stretch"):
-        _analyse("correlation")
-    if b[5].button("What predicts colour", width="stretch", help="Which variables best predict the colour category"):
-        _analyse("feature_importance", {"target": spec["color"]})
-    st.slider("Clusters (k)", 2, 8, 4, key="lab_k", label_visibility="collapsed")
+    with st.expander("Look deeper: groups, unusual tests, what predicts what"):
+        b = st.columns(3) + st.columns(3)
+        k = st.session_state.get("lab_k", 4)
+        if b[0].button("What drives it", width="stretch", help="Which variables drive the main directions of variation"):
+            _analyse("pca_loadings")
+        if b[1].button(f"Natural groups ({k})", width="stretch"):
+            _analyse("kmeans", {"k": k})
+        if b[2].button("Unusual tests", width="stretch"):
+            _analyse("outliers", {"fraction": 0.05})
+        if b[3].button("Closest to Moon base", width="stretch", disabled=L.DATASETS[spec["dataset"]]["o2"] is None):
+            _analyse("nearest_to_scenario", {"scenario": L.MOON})
+        if b[4].button("What moves together", width="stretch"):
+            _analyse("correlation")
+        if b[5].button("What predicts colour", width="stretch", help="Which variables best predict the colour category"):
+            _analyse("feature_importance", {"target": spec["color"]})
+        st.slider("Clusters (k)", 2, 8, 4, key="lab_k", label_visibility="collapsed")
 
 
 def show_result():
@@ -232,7 +222,7 @@ def assistant(spec):
                                     unsafe_allow_html=True)
                         continue
                     args = ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in a["args"].items())
-                    st.caption(("✓ " if a["ok"] else "✗ ") + f"`{a['tool']}({args})`"
+                    st.caption(("done: " if a["ok"] else "failed: ") + f"`{a['tool']}({args})`"
                                + (f" — {a['error']}" if a.get("error") else ""))
     q = st.chat_input("Ask about the data…", disabled=not (api_key and model), key="lab_input")
     pending = st.session_state.pop("lab_pending", None)
@@ -252,7 +242,7 @@ def assistant(spec):
                     st.session_state.lab_result = results[-1]
                 st.session_state.lab_chat.append({"role": "assistant", "content": reply or "Done.", "actions": actions})
             except (ValueError, RuntimeError) as e:
-                st.session_state.lab_chat.append({"role": "assistant", "content": f"⚠️ {e}"})
+                st.session_state.lab_chat.append({"role": "assistant", "content": f"Error: {e}"})
         st.rerun()
 
 

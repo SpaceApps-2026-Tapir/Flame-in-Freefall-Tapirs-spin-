@@ -50,7 +50,9 @@ CSS = """
           background: var(--atlas-panel); text-decoration: none !important; color: var(--atlas-text);}
   .ov a.hcard:hover, .ov a.branch:hover {border-color: var(--atlas-link); box-shadow: 0 0 0 1px var(--atlas-link);}
   .ov a:focus-visible {outline: 2px solid var(--atlas-link); outline-offset: 3px;}
-  .ov.tight {margin-top: .9rem;}
+  .ov.tight {margin: .9rem 0 .8rem;}
+  .ov .verdict {font-size: 1.05rem; line-height: 1.6; padding: .8rem 1rem; border-radius: var(--r);
+                border-left: 4px solid var(--atlas-link); background: var(--atlas-panel); color: var(--atlas-text);}
   .ov .card .p, .ov .kicker {font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--atlas-muted);}
 
   /* map: scenarios x pillars */
@@ -111,7 +113,8 @@ CSS = """
 
 
 def section(n, title, lead):
-    return (f"<h3><span class='step'>{n}</span>{title}</h3>" + (f"<div class='lead'>{lead}</div>" if lead else ""))
+    badge = f"<span class='step'>{n}</span>" if n else ""
+    return (f"<h3>{badge}{title}</h3>" + (f"<div class='lead'>{lead}</div>" if lead else ""))
 
 
 def tidy(fig, height):
@@ -189,126 +192,182 @@ def self_extinction():
     return out
 
 
-def finding_block():
-    if not FLEX_RAW.exists():
-        return
-    r = self_extinction()
-    lo_o2, hi_o2 = REGION["o2"]
-    fig = go.Figure()
-    fig.add_vrect(x0=lo_o2, x1=hi_o2, fillcolor="rgba(127,127,127,.15)", line_width=0)
-    fig.add_annotation(x=(lo_o2 + hi_o2) / 2, y=100, text="Moon base", showarrow=False, yref="y", yanchor="bottom")
-    for fuel, color in FUELS:
-        c = r[fuel]
-        rgb = tuple(int(color[i:i + 2], 16) for i in (1, 3, 5))
-        fig.add_trace(go.Scatter(x=np.r_[r["o2"], r["o2"][::-1]], y=np.r_[c["hi"], c["lo"][::-1]] * 100,
-                                 fill="toself", fillcolor=f"rgba({rgb[0]},{rgb[1]},{rgb[2]},.15)",
-                                 line=dict(width=0), hoverinfo="skip", showlegend=False))
-        fig.add_trace(go.Scatter(x=r["o2"], y=c["fit"] * 100, mode="lines", name=fuel,
-                                 line=dict(color=color, width=2.5),
-                                 hovertemplate=f"{fuel}: %{{y:.0f}}% at %{{x:.1f}}% O₂<extra>model</extra>"))
-        ob = r["obs"][r["obs"].fuel == fuel]
-        fig.add_trace(go.Scatter(x=ob.o2, y=ob.share * 100, mode="markers", showlegend=False,
-                                 marker=dict(color=color, size=np.clip(ob.n * 1.2, 8, 22),
-                                             line=dict(color="white", width=1.5)),
-                                 customdata=ob.n, hovertemplate=f"{fuel}: %{{y:.0f}}% of %{{customdata}} burns "
-                                                                "near %{x:.0f}% O₂<extra>measured</extra>"))
-    tidy(fig, 340)
-    fig.update_layout(
-                      xaxis=dict(title="Oxygen (%)", range=[10, 36]),
-                      yaxis=dict(title="Flames that went out on their own (%)", range=[0, 108]),
-                      legend=dict(orientation="h", y=-0.25, x=0))
-
-    m, h = r["Methanol"]["o50"], r["Heptane"]["o50"]
-    st.markdown(f"""
-<div class='ov'>
-  {section(3, 'Why the Moon-base air matters', 'In microgravity a burning droplet often puts itself out. Above about 20–23% oxygen that safety margin is gone.')}
-  <div class='cards'>
-    <div class='card'><div class='p'>Half the flames self-extinguish below</div>
-      <div class='cond'>{m[1]:.0f}% O₂</div><div class='what'>Methanol (90% range {m[0]:.0f}–{m[2]:.0f}%)</div></div>
-    <div class='card'><div class='p'>Half the flames self-extinguish below</div>
-      <div class='cond'>{h[1]:.0f}% O₂</div><div class='what'>Heptane (90% range {h[0]:.0f}–{h[2]:.0f}%)</div></div>
-    <div class='card'><div class='p'>Burns in Moon-base air</div>
-      <div class='cond'>{r['moon_ext']} of {r['moon_n']}</div><div class='what'>went out on their own
-      (≥{lo_o2:g}% O₂, ~70 kPa)</div></div>
-  </div>
-</div>""", unsafe_allow_html=True)
-    with st.container(border=True):
-        st.plotly_chart(fig, theme="streamlit", width="stretch", key="finding_fig")
-    st.markdown(f"<div class='ov tight'><div class='foot'>Logistic regression on {r['n']} FLEX droplet burns "
-                f"(oxygen, CO₂, helium, pressure, fuel, droplet size); cross-validated AUC {r['auc']:.2f}. "
-                "Lines: model at 101 kPa with no suppressant; bands: 90% bootstrap range; dots: measured share "
-                "(size = number of burns).</div></div>", unsafe_allow_html=True)
-
-
-DEMO_BURNS = {  # real FLEX burns worth comparing; first one is the default (Moon-base air)
-    "191F001": "Moon-base air · methanol, 30% O₂, 72 kPa",
-    "195F001": "Moon-base air · heptane, 30% O₂, 72 kPa",
-    "192F001": "Exploration air · methanol, 34% O₂, 72 kPa",
-}
-
-
-@st.cache_data(show_spinner=False)
-def _compare(test_id):
-    import sim
-    s, row = sim.compare(test_id)
-    return s, row.to_dict()
-
-
 @st.cache_data(show_spinner=False)
 def _simulate(fuel, o2, co2, he, kpa, d0):
     import sim
     return sim.simulate(fuel, o2, co2, he, kpa, d0)
 
 
-def simulator_block():
+PRESET_AIR = {"moon": dict(o2=30.0, kpa=70.3, co2=0.0, g="Moon (0.16 g)"),
+              "iss": dict(o2=21.0, kpa=101.3, co2=0.0, g="Microgravity (ISS)")}
+
+
+def _set_air(which):
+    for k, v in PRESET_AIR[which].items():
+        st.session_state[f"fl_{k}"] = v
+
+
+OUTCOME_COLORS = {"went out by itself": "#1baf7a", "kept burning to the end": "#eda100", "droplet burst": "#eb6834"}
+END_LABEL = {"extinction": "went out by itself", "completion": "kept burning to the end", "disruption": "droplet burst"}
+
+
+def _burn_flow_fig(sim, match):
+    d = sim.data()
+    on = d.index.isin(match.index)
+    dims = {
+        "Oxygen": pd.cut(d.o2_pct, [0, 18, 22, 28, 101], labels=["<18%", "18–22% (air)", "22–28%", "≥28% (Moon-like)"]),
+        "Pressure": pd.cut(d.pressure_kpa, [0, 80, 110, 1e4], labels=["reduced (<80 kPa)", "sea level", "high"]),
+        "Suppressant": d.diluent.map({"none": "none", "CO2": "CO₂", "He": "helium"}),
+        "Fuel": d.fuel,
+        "The flame": d.test_end.map(END_LABEL),
+    }
+    fig = go.Figure(go.Parcats(
+        dimensions=[dict(label=k, values=v.astype(str)) for k, v in dims.items()],
+        line=dict(color=on.astype(int), colorscale=[[0, "rgba(160,160,160,.35)"], [1, "#2a78d6"]], shape="hspline"),
+        hoveron="color", arrangement="freeform", labelfont=dict(size=13)))
+    return tidy(fig, 360).update_layout(margin=dict(l=110, r=150, t=30, b=10))
+
+
+def _burn_map_fig(sim, s, match):
+    d = sim.data()
+    emb, names = sim.burn_map()
+    star = sim.place_on_map(s["fuel"], s["o2"], s["co2"], s["he"], s["kpa"], s["d0"])
+    fig = go.Figure(go.Scatter3d(x=emb[:, 0], y=emb[:, 1], z=emb[:, 2], mode="markers", name="other NASA burns",
+                                 marker=dict(size=3.5, color="#a3a39c", opacity=.7), hoverinfo="skip"))
+    m = d.loc[match.index]
+    for end, col in OUTCOME_COLORS.items():
+        g = m[m.test_end.map(END_LABEL) == end]
+        if len(g):
+            fig.add_trace(go.Scatter3d(x=emb[g.index, 0], y=emb[g.index, 1], z=emb[g.index, 2], mode="markers",
+                                       name=f"like yours: {end}", marker=dict(size=7, color=col),
+                                       customdata=g[["test_id", "o2_pct", "pressure_kpa"]].values,
+                                       hovertemplate="%{customdata[0]} · %{customdata[1]}% O₂ · "
+                                                     "%{customdata[2]:.0f} kPa<extra></extra>"))
+    fig.add_trace(go.Scatter3d(x=[star[0]], y=[star[1]], z=[star[2]], mode="markers+text", name="your flame",
+                               text=["your flame"], textposition="top center",
+                               marker=dict(size=10, color="#d03b3b", symbol="diamond", line=dict(color="white", width=2))))
+    tidy(fig, 460)
+    fig.update_layout(scene=dict(xaxis_title=names[0], yaxis_title=names[1], zaxis_title=names[2], aspectmode="cube",
+                                 xaxis=dict(showticklabels=False), yaxis=dict(showticklabels=False),
+                                 zaxis=dict(showticklabels=False)),
+                      legend=dict(orientation="h", y=0))
+    return fig
+
+
+def fire_lab_block():
+    """One interactive block: change the air and the fuel, see the chance the flame puts itself out, watch it burn."""
     import sim
     if not sim.RAW.exists():
         return
-    st.markdown("<div class='ov'>" + section(1, "Light a fire in Moon-base air",
-                "A droplet of fuel burning in microgravity at 30% oxygen: a mini simulation built from 262 NASA "
-                "burns, next to what NASA measured in the same air. Press ▶.") + "</div>", unsafe_allow_html=True)
-    d = sim.data()
-    options = list(DEMO_BURNS) + sorted(set(d.test_id) - set(DEMO_BURNS)) + ["custom"]
-    pick = st.selectbox("Burn", options, format_func=lambda t: "Design your own conditions" if t == "custom"
-                        else DEMO_BURNS.get(t, f"NASA burn {t}"), label_visibility="collapsed", key="sim_pick")
-    measured = None
-    if pick == "custom":
-        c = st.columns(5)
-        fuel = c[0].radio("Fuel", ["Methanol", "Heptane"], key="sim_fuel")
-        o2 = c[1].slider("Oxygen (%)", 12.0, 34.0, 30.0, 0.5, key="sim_o2")
-        kpa = c[2].slider("Pressure (kPa)", 50.0, 110.0, 70.3, 0.5, key="sim_kpa")
-        co2 = c[3].slider("CO₂ added (%)", 0.0, 60.0, 0.0, 1.0, key="sim_co2")
-        d0 = c[4].slider("Droplet (mm)", 1.5, 4.5, 3.0, 0.1, key="sim_d0")
-        s = _simulate(fuel, o2, co2, 0.0, kpa, d0)
-        near = sim.nearby_burns(o2, kpa).iloc[0]
-        st.caption(f"Closest real burn: {near.test_id} ({near.fuel}, {near.o2_pct:g}% O₂, {near.pressure_kpa:.0f} kPa). "
-                   "Far from every real burn, the simulation is a guess.")
+    for k, v in dict(fuel="Methanol", o2=30.0, kpa=70.3, co2=0.0, d0=3.0, g="Moon (0.16 g)").items():
+        st.session_state.setdefault(f"fl_{k}", v)
+
+    st.markdown("<div class='ov'>" + section(2, "Light a fire in space",
+                "Change the air, the fuel and the gravity. Will the flame put itself out?") + "</div>",
+                unsafe_allow_html=True)
+    b1, b2, g_col = st.columns([1.3, 1, 3], vertical_alignment="bottom")
+    b1.button("Try it in a Moon base", on_click=_set_air, args=("moon",), type="primary", width="stretch")
+    b2.button("ISS air", on_click=_set_air, args=("iss",), width="stretch")
+
+    grav = g_col.segmented_control("Gravity", list(sim.GRAVITY), key="fl_g", label_visibility="collapsed") \
+        or "Microgravity (ISS)"
+    c = st.columns([1, 1.4, 1.4, 1.4, 1.4])
+    fuel = c[0].radio("Fuel", ["Methanol", "Heptane"], key="fl_fuel")
+    o2 = c[1].slider("Oxygen (%)", 12.0, 34.0, step=0.5, key="fl_o2")
+    kpa = c[2].slider("Pressure (kPa)", 50.0, 110.0, step=0.5, key="fl_kpa")
+    co2 = c[3].slider("CO₂ added (%)", 0.0, 60.0, step=1.0, key="fl_co2", help="A suppressant gas mixed into the air.")
+    d0 = c[4].slider("Droplet size (mm)", 1.5, 4.5, step=0.1, key="fl_d0")
+
+    s = _simulate(fuel, o2, co2, 0.0, kpa, d0)
+    r = self_extinction()
+    color = dict(FUELS)[fuel]
+    grid = np.linspace(10, 36, 105)
+
+    fig = go.Figure()
+    lo_o2, hi_o2 = REGION["o2"]
+    fig.add_vrect(x0=lo_o2, x1=hi_o2, fillcolor="rgba(127,127,127,.15)", line_width=0)
+    fig.add_annotation(x=(lo_o2 + hi_o2) / 2, y=100, yanchor="bottom", text="Moon base", showarrow=False)
+    other, ocol = [f for f in FUELS if f[0] != fuel][0]
+    fig.add_trace(go.Scatter(x=grid, y=sim.p_curve(other, co2, 0.0, kpa, d0, grid) * 100, mode="lines",
+                             name=other, line=dict(color=ocol, width=1.5, dash="dot"), opacity=.6,
+                             hovertemplate=f"{other}: %{{y:.0f}}%<extra></extra>"))
+    fig.add_trace(go.Scatter(x=grid, y=sim.p_curve(fuel, co2, 0.0, kpa, d0, grid) * 100, mode="lines", name=fuel,
+                             line=dict(color=color, width=3),
+                             hovertemplate=f"{fuel}: %{{y:.0f}}% at %{{x:.1f}}% O₂<extra></extra>"))
+    ob = r["obs"][r["obs"].fuel == fuel]
+    fig.add_trace(go.Scatter(x=ob.o2, y=ob.share * 100, mode="markers", showlegend=False,
+                             marker=dict(color=color, size=np.clip(ob.n * 1.2, 7, 20), opacity=.45),
+                             customdata=ob.n, hovertemplate="NASA: %{y:.0f}% of %{customdata} burns<extra></extra>"))
+    fig.add_trace(go.Scatter(x=[o2], y=[s["p_self_ext"] * 100], mode="markers+text", name="Your flame",
+                             text=[f"{s['p_self_ext']:.0%}"], textposition="top center",
+                             textfont=dict(size=14, color=color),
+                             marker=dict(size=17, color=color, symbol="star", line=dict(color="white", width=2)),
+                             hoverinfo="skip"))
+    tidy(fig, 330)
+    fig.update_layout(xaxis=dict(title="Oxygen (%)", range=[10, 36]),
+                      yaxis=dict(title="Chance it goes out before the fuel is gone (%)", range=[0, 112]),
+                      legend=dict(orientation="h", y=-0.22, x=0))
+
+    left, right = st.columns([1.3, 1], gap="medium")
+    with left, st.container(border=True):
+        st.plotly_chart(fig, theme="streamlit", width="stretch", key="fl_curve")
+    with right:
+        theme = getattr(getattr(st.context, "theme", None), "type", None) or "light"
+        st.iframe(sim.animation_html(s, height=372, g=sim.GRAVITY[grav], theme=theme), height=380)  # our own HTML/JS
+
+    # what the model says, how sure it is, and what NASA actually ran in this air
+    cert = sim.certainty(s)
+    cert["says"] = ("goes out by itself before the fuel is gone" if cert["says"] == "goes out by itself"
+                    else "keeps burning until the fuel is gone")
+    match = sim.matching(fuel, o2, co2, kpa)
+    ends = {"extinction": "went out by itself", "disruption": "the droplet burst", "completion": "burned to the end"}
+    if len(match):
+        tally = match.test_end.map(ends).value_counts()
+        nasa = (f"NASA ran <b>{len(match)}</b> {fuel.lower()} burns in this air: "
+                + ", ".join(f"{n} {e}" for e, n in tally.items()) + ".")
     else:
-        s, row = _compare(pick)
-        measured = pd.Series(row)
+        nasa = f"NASA never burned {fuel.lower()} in this air: this part is an estimate, not a measurement."
+    gv = sim.GRAVITY[grav]
+    if gv == 0:
+        gnote = ""
+    elif gv >= 1:
+        gnote = (" <br><b>On Earth</b> rising hot gas keeps feeding the flame fresh air. The drawing shows it; the "
+                 "numbers still come from microgravity burns.")
+    else:
+        gnote = (f" <br><b>{grav.split(' (')[0]} gravity has never been tested in these experiments:</b> the drawing "
+                 "shows hot gas starting to rise, but every number comes from microgravity burns. Short ground "
+                 "experiments in simulated partial gravity found some materials burn at lower oxygen than on Earth.")
+    st.markdown(f"""<div class='ov tight'><div class='verdict'>
+  The model says your flame <b>{cert['says']}</b>, with <b>{cert['certainty']:.0%} certainty</b>.
+  On the {cert['k']} most similar NASA burns it was right <b>{cert['local_accuracy']:.0%}</b> of the time.
+  It lasts about <b>{s['t_end']:.0f} s</b>. {nasa}{gnote}</div></div>""", unsafe_allow_html=True)
 
+    # the data, filtered to this flame: every NASA burn, the ones like yours highlighted
+    v1, v2 = st.columns([3, 1.2], vertical_alignment="bottom")
+    view = v1.segmented_control("NASA burns like yours", ["Flow", "Map"], default="Flow", key="fl_view",
+                                format_func={"Flow": "From conditions to outcome", "Map": "Look-alike map"}.get)
+    v2.markdown(f"<div style='text-align:right'><a href='?page=visual&data=flex&chart=similarity&o2={o2:g}"
+                f"&kpa={kpa:g}&fuel={fuel}' target='_self'>Explore around this flame →</a></div>",
+                unsafe_allow_html=True)
     with st.container(border=True):
-        left, right = st.columns([1, 1.3], gap="large")
-        with left:
-            st.plotly_chart(tidy(sim.animation(s), 330), theme="streamlit", width="stretch", key="sim_anim")
-        with right:
-            st.plotly_chart(tidy(sim.d2_chart(s, measured), 330), theme="streamlit", width="stretch", key="sim_d2")
-
-    out_sim = "goes out by itself" if s["p_self_ext"] >= 0.5 else "keeps burning"
-    cards = [("Burn time", f"{s['t_end']:.1f} s",
-              f"NASA: {measured.burn_time_s:.1f} s" if measured is not None else "simulated"),
-             ("The flame…", out_sim, "NASA: " + {"extinction": "went out by itself", "disruption": "droplet burst",
-                                                  "completion": "burned to the end"}[measured.test_end]
-              if measured is not None else f"{s['p_self_ext']:.0%} chance it goes out by itself"),
-             ("Fuel burned", f"{s['fuel_burned']:.0%}",
-              (f"NASA: {1 - (measured.d_ext_mm / measured.d0_mm) ** 3:.0%}" if measured is not None
-               and pd.notna(measured.d_ext_mm) else "of the droplet volume"))]
-    st.markdown("<div class='ov tight'><div class='cards'>" + "".join(
-        f"<div class='card'><div class='p'>{a}</div><div class='cond'>{b}</div><div class='what'>{c}</div></div>"
-        for a, b, c in cards) + "</div><div class='foot'>d² law (diameter² shrinks at a steady rate) with the rate, "
-        "the extinction size and the chance of self-extinction learned from FLEX. For a NASA burn, the models are "
-        "re-trained without that burn first. The blue shell around the droplet is illustrative.</div></div>",
-        unsafe_allow_html=True)
+        if view == "Map":
+            st.plotly_chart(_burn_map_fig(sim, s, match), theme="streamlit", width="stretch", key="fl_map")
+        else:
+            st.plotly_chart(_burn_flow_fig(sim, match), theme="streamlit", width="stretch", key="fl_flow")
+        st.caption(f"Highlighted: the {len(match)} NASA burns with {fuel.lower()} within ±3 points of O₂, ±10 kPa "
+                   f"and ±10 points of CO₂ of your flame. Grey: all other {len(sim.data()) - len(match)} burns.")
+    m, h = r["Methanol"]["o50"], r["Heptane"]["o50"]
+    with st.expander("How this works"):
+        st.markdown(f"""
+* Half of NASA's methanol flames put themselves out below **{m[1]:.0f}% O₂** ({m[0]:.0f}–{m[2]:.0f}%), heptane below
+  **{h[1]:.0f}%** ({h[0]:.0f}–{h[2]:.0f}%). In Moon-base air, **{r['moon_ext']} of {r['moon_n']}** NASA burns went out by themselves.
+* Curve and star: a logistic model trained on {r['n']} FLEX droplet burns (cross-validated AUC {r['auc']:.2f}).
+  Faded dots: NASA's measured share at 101 kPa with no suppressant.
+* The burn follows the d² law: the droplet diameter squared shrinks at a steady rate learned from FLEX.
+* The drawing is an illustration, not a measurement: its contours follow the inputs, and gravity stretches the
+  flame upward (buoyancy) and makes the soot rise. All NASA data here is from microgravity.
+* These are fuel droplets, not solid materials: they show how flames behave in microgravity, not whether a
+  specific fabric is safe.""")
 
 
 def gap_counts(df):
@@ -416,7 +475,6 @@ def _cell(n, total, scenario, pillar):
 def overview(df):
     gaps = _gaps(df)
     st.markdown(CSS, unsafe_allow_html=True)
-    simulator_block()  # the hook: a fire in Moon-base air
 
     # map: scenarios x pillars (CSS grid, every row the same height)
     head = "".join(
@@ -438,35 +496,13 @@ def overview(df):
     matrix = (f"<div class='mapwrap'><div class='mapgrid'><div class='kicker' style='align-self:end'>"
               f"Pillar ↓ · Atmosphere →</div>{head}{''.join(rows)}</div></div>")
 
-    # 3 ----------------------------------------------------------------- test next
-    nxt = next_experiments(df)
-    cards = "".join(
-        f"<div class='card'><div class='p'>{name}</div>"
-        f"<div class='cond'>{nxt[p]['o2']:.1f}% O₂ · {nxt[p]['kpa']:.0f} kPa</div>"
-        f"<div class='what'>{WHAT_TO_BURN[p]}</div>"
-        f"<div class='cov'>Moon-habitat range covered<br><b>{nxt[p]['before']:.0%} → {nxt[p]['after']:.0%}</b>"
-        f" with this one test</div></div>"
-        for p, name, _ in PILLARS)
-
-    lo_o2, hi_o2 = REGION["o2"]
-    lo_k, hi_k = REGION["kpa"]
     st.markdown(f"""
 <div class='ov'>
-  {section(2, "What NASA has tested", "Each number is how many tests ran near that atmosphere. Click any box to go "
-           "deeper. Mini maps: oxygen → vs pressure ↑, red box = Moon-habitat range.")}
+  {section(1, "What NASA has tested", "Tests run near each atmosphere. Click any box to go deeper.")}
   {matrix}
-  <div class='foot'>Every test ran in microgravity on the ISS: Moon and Mars gravity have never been tested.</div>
-</div>""", unsafe_allow_html=True)
-    finding_block()
-    st.markdown(f"""
-<div class='ov'>
-  {section(4, "What to test next", f"The one new test per pillar that would cover the most of the Moon-habitat range "
-           f"({lo_o2:g}–{hi_o2:g}% O₂, {lo_k:g}–{hi_k:g} kPa).")}
-  <div class='cards'>{cards}</div>
-  <div class='foot'>"Covered" = a test within ±{TOL_O2:g} pp O₂ and ±{TOL_KPA:g} kPa.</div>
-</div>""", unsafe_allow_html=True)
 
-    branches_block(df)
+</div>""", unsafe_allow_html=True)
+    fire_lab_block()  # then: change the air, watch the flame
 
 
 def branches_block(df):
@@ -475,6 +511,5 @@ def branches_block(df):
         f"<a class='branch' href='{url(b['params'])}' target='_self'>"
         f"{mini_map(df, pillar=b['teaser']) if b['teaser'] in ('prevention', 'detection', 'suppression') else mini_icon(b['teaser'])}"
         f"<b>{b['title']}</b><span>{b['sub']}</span></a>" for b in BRANCHES)
-    st.markdown(f"""<div class='ov'>{section(5, "Where to next?", "Pick a question. Charts open with the assistant "
-                                                "ready to keep guiding you.")}
+    st.markdown(f"""<div class='ov'>{section(0, "Start with a question", "Each card opens the page that answers it.")}
   <nav class='branches' aria-label='Main paths into the atlas'>{cards}</nav></div>""", unsafe_allow_html=True)

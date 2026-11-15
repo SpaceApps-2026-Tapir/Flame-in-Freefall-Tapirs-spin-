@@ -29,7 +29,7 @@ SYSTEM = """You drive an interactive 3D chart of NASA microgravity fire-safety t
 Rules:
 - Act with tools first, then answer in 2-4 short sentences in plain language: what the chart now shows and
   what stands out. Talk about tests, oxygen, pressure, flames and smoke, not about statistics: do not name
-  methods (PCA, UMAP, random forest...) unless the user asks how it was done.
+  methods (t-SNE, PCA, random forest...) unless the user asks how it was done.
 - Choose the chart yourself: 'space' for where tests sit vs a mission, 'flows' for conditions -> outcome,
   'evidence' for what exists, 'mixture' for FLEX gas mixtures, 'paths' to compare many quantities at once,
   'similarity' for which tests resemble each other.
@@ -59,15 +59,13 @@ TOOLS = [
         "name": "set_view", "description": "Change how the 3D chart looks or move the camera.",
         "parameters": {"type": "object", "properties": {
             "chart": {"type": "string", "enum": list(L.CHARTS)},
-            "method": {"type": "string", "enum": ["conditions", "pca", "umap", "tsne"],
-                       "description": "advanced: only for the 'similarity' chart"},
+            "perplexity": {"type": "number", "description": "look-alike map only: neighbourhood size 5-50"},
             "x": {"type": "string"}, "y": {"type": "string"}, "z": {"type": "string"},
             "color_by": {"type": "string"},
             "rotate_degrees": {"type": "number", "description": "turn around the vertical axis"},
             "tilt_degrees": {"type": "number", "description": "look more from above (+) or below (-)"},
             "zoom": {"type": "number", "description": ">1 zooms in, <1 zooms out"},
             "preset_view": {"type": "string", "enum": ["top", "front", "side", "default"]},
-            "umap_neighbors": {"type": "integer"}, "umap_min_dist": {"type": "number"},
             "clear_highlight": {"type": "boolean"}}}}},
     {"type": "function", "function": {
         "name": "suggest_next", "description": "Offer a link to the next place to look.",

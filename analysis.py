@@ -4,8 +4,8 @@ Three tabs:
   * Droplet flames (FLEX)      - 3D explorer + random-forest model of burning rate / extinction size,
                                  with a 3D response surface the user can slice.
   * Smoke and detectors (SAME) - 3D explorer + "can the smoke tell what is burning?" classifier,
-                                 PCA / k-means view of smoke signatures.
-  * All tests in 3D            - PCA or t-SNE embedding of all 678 tests, nearest tests to a mission scenario.
+                                 look-alike map (t-SNE) / k-means of smoke signatures.
+  * All tests in 3D            - t-SNE look-alike map of all 678 tests, axes named by correlation, nearest tests to a mission scenario.
 
 Data: data/raw/flex_droplets.csv and data/raw/same_smoke.csv (built by scripts/extract_raw_data.py)
 and master_tests.csv. Every model reports cross-validated scores next to a naive baseline, so the
@@ -20,7 +20,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
@@ -284,12 +283,13 @@ def same_embedding(features, k):
     if "mass_conc_mgm3" in X:
         X["mass_conc_mgm3"] = np.log10(X["mass_conc_mgm3"])
     Xs = make_pipeline(SimpleImputer(strategy="median"), StandardScaler()).fit_transform(X)
-    pca = PCA(n_components=3, random_state=SEED).fit(Xs)
-    emb = pca.transform(Xs)
+    from lab_engine import axis_names
+    emb = TSNE(n_components=3, perplexity=min(30, (len(Xs) - 1) / 3), random_state=SEED, init="pca").fit_transform(Xs)
     clusters = KMeans(n_clusters=k, n_init=20, random_state=SEED).fit_predict(Xs)
     d[["pc1", "pc2", "pc3"]] = emb
     d["cluster"] = [f"Cluster {c + 1}" for c in clusters]
-    return d, pca.explained_variance_ratio_, adjusted_rand_score(d.material.astype(str).to_numpy(dtype=object), clusters)
+    names = axis_names(emb, d, {k: SAME_LABELS[k] for k in features})
+    return d, names, adjusted_rand_score(d.material.astype(str).to_numpy(dtype=object), clusters)
 
 
 def same_tab():
@@ -352,12 +352,11 @@ def same_tab():
         by = st.radio("Colour by", ["material", "cluster"], horizontal=True, key="same_pca_c",
                       format_func={"material": "Real material", "cluster": "k-means cluster"}.get)
         fig = px.scatter_3d(e, x="pc1", y="pc2", z="pc3", color=by, color_discrete_map=color_map(e[by])[0],
-                            labels={"pc1": f"PC1 ({var[0]:.0%})", "pc2": f"PC2 ({var[1]:.0%})",
-                                    "pc3": f"PC3 ({var[2]:.0%})"},
+                            labels={"pc1": var[0], "pc2": var[1], "pc3": var[2]},
                             hover_data=["test_id", "material", "cluster", "description"])
         fig.update_traces(marker=dict(size=4))
         st.plotly_chart(style(fig, height=420), theme="streamlit", width="stretch", key="same_pca")
-        st.caption(f"PCA of the smoke signature ({sum(var):.0%} of the variance in 3 axes). "
+        st.caption("Look-alike map of the smoke signatures; each axis is named after what it follows most. "
                    f"Agreement between clusters and real materials (adjusted Rand index): {ari:.2f} "
                    "(0 = random, 1 = identical).")
 
@@ -400,15 +399,6 @@ def _features(df):
     return tf
 
 
-@st.cache_resource
-def umap_all(df, n_neighbors, min_dist):
-    import umap  # heavy import (numba): only when this view is opened
-    tf = _features(df)
-    reducer = umap.UMAP(n_components=3, n_neighbors=n_neighbors, min_dist=min_dist, random_state=SEED)
-    emb = reducer.fit_transform(tf(df))
-    return emb, reducer, tf
-
-
 def neighbour_mixing(emb, labels, k=10):
     """Share of each experiment's k nearest neighbours (in the embedding) that belong to each other experiment."""
     from sklearn.neighbors import NearestNeighbors
@@ -419,49 +409,33 @@ def neighbour_mixing(emb, labels, k=10):
 
 
 @st.cache_data
-def embed_all(df, method, perplexity):
-    d = df.copy()
-    X = _features(d)(d)
-    if method == "PCA":
-        model = PCA(n_components=3, random_state=SEED)
-        emb = model.fit_transform(X)
-        axes = [f"PC{i + 1} ({v:.0%})" for i, v in enumerate(model.explained_variance_ratio_)]
-    else:
-        emb = TSNE(n_components=3, perplexity=perplexity, random_state=SEED, init="pca").fit_transform(X)
-        axes = ["t-SNE 1", "t-SNE 2", "t-SNE 3"]
-    return emb, axes
+def embed_all(df, perplexity):
+    from lab_engine import axis_names
+    X = _features(df)(df)
+    emb = TSNE(n_components=3, perplexity=perplexity, random_state=SEED, init="pca").fit_transform(X)
+    return emb, axis_names(emb, df, {"oxygen_pct": "Oxygen (%)", "pressure_kpa": "Pressure (kPa)",
+                                     "airflow_cms": "Airflow (cm/s)"}, ["material_class", "flow_direction"])
 
 
 def all_tab(df):
-    st.markdown(f"All **{len(df)} tests** in 3D: tests run under similar conditions (oxygen, pressure, airflow, "
-                "fuel type, flow direction) end up close together. The experiment name is **not** an input, so "
-                "if two experiments mix, they really tested the same conditions.")
-    a, b, c, e = st.columns([1.2, 1.2, 1, 1.4])
-    method = a.radio("Method", ["UMAP", "t-SNE", "PCA"], horizontal=True, key="all_m",
-                     help="UMAP and t-SNE keep neighbourhoods: groups are meaningful, distances between far groups "
-                          "are not. PCA is a plain rotation: axes keep their meaning.")
-    if method == "UMAP":
-        nn = b.slider("Neighbours", 5, 50, 15, key="all_nn",
-                      help="Low = fine local detail, many islands. High = broader structure.")
-        md = b.slider("Minimum distance", 0.0, 0.9, 0.3, 0.05, key="all_md", help="Low = tight clumps.")
-    elif method == "t-SNE":
-        perp = b.slider("Perplexity", 5, 50, 30, key="all_p")
+    st.markdown(f"All **{len(df)} tests** on one look-alike map: tests run under similar conditions (oxygen, "
+                "pressure, airflow, fuel type, flow direction) sit together. The experiment name is **not** an "
+                "input, so if two experiments mix, they really tested the same conditions. Each axis is named after "
+                "the measured quantities it follows most.")
+    b, c, e = st.columns([1.2, 1, 1.4])
+    perp = b.slider("Neighbourhood size", 5, 50, 30, key="all_p",
+                    help="How many neighbours each test looks at. Low = many small islands; high = broader groups.")
     color = c.selectbox("Colour by", list(MASTER_COLOR), format_func=MASTER_COLOR.get, key="all_c")
-    scen = e.selectbox("Place a mission scenario", ["(none)"] + list(PRESETS), index=2, key="all_s")
+    scen = e.selectbox("Mark the tests closest to", ["(none)"] + list(PRESETS), index=2, key="all_s")
 
     base = df.reset_index(drop=True)
     d = base.copy()
     d["outcome_group"] = d.outcome_category.map(OUTCOME_GROUPS).fillna("Other / see notes")
-    if method == "UMAP":
-        emb, reducer, tf = umap_all(base, nn, md)
-        axes = ["UMAP 1", "UMAP 2", "UMAP 3"]
-    else:
-        emb, axes = embed_all(base, method, perp if method == "t-SNE" else 30)
+    emb, axes = embed_all(base, perp)
     d[["e1", "e2", "e3"]] = emb
     d[color] = fold_other(d[color])
     cmap, _ = color_map(d[color])
     cmap["Other"] = OTHER
-
     fig = px.scatter_3d(d, x="e1", y="e2", z="e3", color=color, color_discrete_map=cmap,
                         labels={"e1": axes[0], "e2": axes[1], "e3": axes[2], **MASTER_COLOR},
                         hover_data={"experiment": True, "test_id": True, "material": True, "oxygen_pct": True,
@@ -469,32 +443,21 @@ def all_tab(df):
                         opacity=0.8)
     fig.update_traces(marker=dict(size=3.5))
     if scen != "(none)":
-        p = PRESETS[scen]
         near = rank(base, scen, n=15)
         h = d.loc[near.index]
-        fig.add_trace(go.Scatter3d(x=h.e1, y=h.e2, z=h.e3, mode="markers", name="15 closest tests",
-                                   marker=dict(size=9, color="rgba(0,0,0,0)", line=dict(width=3, color="#111")),
+        fig.add_trace(go.Scatter3d(x=h.e1, y=h.e2, z=h.e3, mode="markers", name=f"15 closest to {scen.split(' (')[0]}",
+                                   marker=dict(size=10, color="rgba(0,0,0,0)", line=dict(width=4, color="#d03b3b")),
                                    customdata=np.c_[h.experiment, h.test_id, near.relevance],
                                    hovertemplate="%{customdata[0]} %{customdata[1]}<br>relevance %{customdata[2]}"
                                                  "<extra></extra>"))
-        if method == "UMAP":
-            # place the scenario itself: its O2 / pressure with the fuel type and flow of the tests closest to it
-            row = pd.DataFrame([{"oxygen_pct": p["o2"], "pressure_kpa": p["kpa"], "airflow_cms": np.nan,
-                                 **{c_: near[c_].mode().iat[0] for c_ in CAT_COLS}}])
-            sp = reducer.transform(tf(row))[0]
-            fig.add_trace(go.Scatter3d(x=[sp[0]], y=[sp[1]], z=[sp[2]], mode="markers+text", name=scen,
-                                       text=[scen.split(" (")[0]], textposition="top center",
-                                       marker=dict(size=11, symbol="diamond", color="#d03b3b",
-                                                   line=dict(width=2, color="white")),
-                                       hovertemplate=f"{scen}<br>{p['o2']:g}% O₂ · {p['kpa']:g} kPa<extra></extra>"))
     st.plotly_chart(style(fig, height=680), theme="streamlit", width="stretch", key="all_fig")
 
     mix = neighbour_mixing(emb, base.experiment)
     pairs = []
     for x_ in mix.index:
         for y_ in mix.columns:
-            if x_ < y_ and (mix.at[x_, y_] + mix.get(x_, pd.Series()).get(y_, 0)) > 0:
-                share = (mix.at[x_, y_] + (mix.at[y_, x_] if y_ in mix.index and x_ in mix.columns else 0)) / 2
+            if x_ < y_ and y_ in mix.index and x_ in mix.columns:
+                share = (mix.at[x_, y_] + mix.at[y_, x_]) / 2
                 if share >= 0.05:
                     pairs.append((share, x_, y_))
     if pairs:
@@ -502,13 +465,11 @@ def all_tab(df):
             f"{x_} and {y_} share **{s_:.0%}** of their nearest neighbours" for s_, x_, y_ in sorted(pairs, reverse=True))
             + ". Every other pair barely touches: each experiment explored its own island of conditions.")
     method_note("""
-* **Inputs:** oxygen, pressure and airflow (standardised, weighted ×1.5) plus one-hot fuel type and flow
-  direction. Missing airflow is filled with the median. Experiment and pillar are *not* inputs.
-* **Neighbour sharing:** for each test, its 10 nearest neighbours in the 3D map; the share that belongs to the
-  other experiment, averaged both ways.
-* **Scenario diamond (UMAP only):** the scenario's oxygen and pressure, with the fuel type and flow direction most
-  common among its 15 closest tests, projected into the trained map. **t-SNE** and **PCA** show only the rings.
-* UMAP and t-SNE: the size of a group and the gap between far groups mean nothing.
+* **Map:** t-SNE in 3D on oxygen, pressure and airflow (standardised, ×1.5) plus fuel type and flow direction.
+  Group membership is meaningful; the gap between far islands is not.
+* **Axis names:** for each axis, the measured quantities with the strongest rank correlation (|ρ| ≥ 0.35) with
+  that axis. They describe the map, they are not exact units.
+* **Neighbour sharing:** for each test, its 10 nearest neighbours on the map; the share from the other experiment.
 """)
 
 

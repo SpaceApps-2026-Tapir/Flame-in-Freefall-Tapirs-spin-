@@ -31,7 +31,7 @@ class EngineTests(unittest.TestCase):
     def test_bad_input_is_rejected(self):
         spec = L.default_spec("all")
         for tool, args in [("set_design_matrix", {"variables": [{"variable": "nope"}]}),
-                           ("set_view", {"method": "magic"}), ("set_view", {"x": "experiment"})]:
+                           ("set_view", {"method": "umap"}), ("set_view", {"x": "experiment"})]:
             with self.assertRaises(ValueError):
                 L.apply_tool(spec, tool, args)
 
@@ -47,7 +47,7 @@ class AgentTests(unittest.TestCase):
             {"tool_calls": [
                 {"id": "1", "function": {"name": "set_design_matrix",
                                          "arguments": json.dumps({"only": ["oxygen_pct", "pressure_kpa"]})}},
-                {"id": "2", "function": {"name": "set_view", "arguments": json.dumps({"method": "pca", "rotate_degrees": 30})}},
+                {"id": "2", "function": {"name": "set_view", "arguments": json.dumps({"chart": "similarity", "rotate_degrees": 30})}},
                 {"id": "3", "function": {"name": "set_view", "arguments": json.dumps({"x": "not_a_column"})}},
                 {"id": "4", "function": {"name": "run_analysis", "arguments": json.dumps({"name": "kmeans", "params": {"k": 3}})}},
             ]},
@@ -62,7 +62,7 @@ class AgentTests(unittest.TestCase):
         spec, reply, actions, results = lab_agent.run(L.default_spec("all"), [], "cluster by O2 and pressure", call=fake)
         self.assertEqual(reply, "Clustered on oxygen and pressure.")
         self.assertEqual([a["ok"] for a in actions], [True, True, False, True])
-        self.assertEqual(spec["method"], "pca")
+        self.assertEqual(spec["method"], "tsne")
         self.assertEqual(spec["color"], "cluster")
         self.assertEqual(results[0]["name"], "kmeans")
         self.assertEqual(seen[-1]["role"], "tool")  # tool results were fed back before the final answer
