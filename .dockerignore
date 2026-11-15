@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+
+# uv (necesario en la imagen para pip install)
+# uv.lock is kept
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Documentos generados o descargados (no se necesitan en la imagen, se regeneran)
+documents/pdfs/
+documents/chroma/
+documents/index.json
+documents/index.json.tmp
+documents/manifest.csv.tmp
+
+# Git
+.git/
+.gitignore
+
+# Docker (el Dockerfile y .dockerignore no van al contenedor, entrypoint.sh sí)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Documentation (opcional, reducir tamaño de imagen)
+LICENSE
+README.md
+THIRD_PARTY_NOTICES.md
