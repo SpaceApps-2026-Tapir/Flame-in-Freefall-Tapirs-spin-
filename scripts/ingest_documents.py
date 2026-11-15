@@ -16,7 +16,7 @@ MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_PDF_PAGES = 500
 
 
-def ingest():
+def ingest(progress=None):
     with (ROOT / "manifest.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))
     if not rows:
@@ -28,6 +28,8 @@ def ingest():
         if not doc_id or doc_id in seen or not row.get("title"):
             raise ValueError("Each document needs a unique document_id and a title.")
         seen.add(doc_id)
+        if progress:
+            progress(f"Preparing PDF {len(seen)}/{len(rows)}: {row['title']}")
         url = row.get("pdf_url", "")
         if urlparse(url).scheme != "https" or not urlparse(url).hostname:
             raise ValueError(f"{doc_id}: pdf_url must be a direct HTTPS PDF URL.")
@@ -79,6 +81,8 @@ def ingest():
         if len(chunks) == before:
             raise ValueError(f"{doc_id}: no text extracted; scanned PDFs need OCR first.")
         print(f"Indexed {doc_id}: {len(chunks) - before} passages")
+    if progress:
+        progress(f"Generating local embeddings and storing {len(chunks)} passages in Chroma…")
     build_index(chunks)
     print(f"Published Chroma index: {len(chunks)} passages")
 

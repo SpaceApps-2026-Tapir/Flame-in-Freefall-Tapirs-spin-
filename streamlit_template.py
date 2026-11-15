@@ -299,6 +299,18 @@ def run_question(question, context):
         result["error"] = question_error
         return result
     try:
+        if secret("RAG_AUTO_INIT").strip().lower() in ("true", "1", "yes"):
+            from cloud_index import ensure_index
+            with st.status("Preparing PDF search…", expanded=True) as status:
+                try:
+                    built = ensure_index(lambda message: status.update(label=message))
+                except Exception as exc:
+                    status.update(label="PDF index initialization failed", state="error")
+                    raise RuntimeError("Could not initialize the PDF index. Check the cloud logs and Drive "
+                                       "download permissions, then submit your question to retry.") from exc
+                status.update(label="PDF search ready", state="complete", expanded=False)
+            if built:
+                cached_retrieve.clear()
         with st.spinner("Searching NASA documents…"):
             result["passages"] = cached_retrieve(question)
         if not result["passages"]:

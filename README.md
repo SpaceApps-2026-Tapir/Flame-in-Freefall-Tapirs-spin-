@@ -2,6 +2,31 @@
 
 ## PDF questions and answers (RAG)
 
+### Streamlit Community Cloud initialization
+
+Deploy `streamlit_template.py` from GitHub with Python 3.14. In the app's
+**Settings → Secrets** (or deployment **Advanced settings**), add:
+
+```toml
+GROQ_API_KEY = "your-groq-api-key"
+GROQ_MODEL = "openai/gpt-oss-120b"
+RAG_AUTO_INIT = "true"
+```
+
+Commit and push `cloud_index.py`, the ingestion script, and
+`documents/manifest.csv` with the app. On the first submitted question, the app
+downloads the manifest's PDFs, downloads the embedding model if needed, and
+builds Chroma locally with progress messages. Other sessions share the build;
+later questions reuse the index. A failed initialization can be retried by
+submitting again; details appear in the cloud logs. No terminal command is needed.
+
+Keep Drive downloads publicly accessible. The folder is not re-scanned at
+startup: refresh and commit the manifest when changing the collection. Existing
+indexes are reused until removed. If hosting storage is cleared, the next
+question rebuilds the index. Downloads and embeddings can make the initial
+request take several minutes. Leave `RAG_AUTO_INIT` unset to retain manual local
+ingestion. Do not commit the real secrets file, downloaded PDFs, or Chroma data.
+
 PDF passages are stored in persistent local ChromaDB with local ONNX MiniLM
 embeddings and optional Groq answer generation. Retrieval needs no API key.
 Search combines semantic and keyword rankings, skips title slides and tables of
