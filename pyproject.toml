@@ -3,6 +3,8 @@ name = "flame-in-freefall"
 version = "0.1.0"
 description = "Flame in Freefall: a Streamlit fire safety evidence atlas"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "chromadb>=1.5.9",

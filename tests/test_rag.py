@@ -45,6 +45,35 @@ class RetrievalTests(unittest.TestCase):
             self.assertIn("Insufficient", answer("question", [], {}, "", ""))
             network.assert_not_called()
 
+    def test_index_inventory_counts_passages_by_pdf(self):
+        from vector_store import index_inventory
+        collection = MagicMock()
+        collection.get.return_value = {"metadatas": [
+            {"document_id": "bass", "title": "BASS report", "experiment": "BASS",
+             "source_page_url": "https://example.com/bass"},
+            {"document_id": "flex", "title": "FLEX report", "experiment": "FLEX",
+             "pdf_url": "https://example.com/flex.pdf"},
+            {"document_id": "bass", "title": "BASS report", "experiment": "BASS"},
+            {"title": "Unassigned", "experiment": ""},
+            {"title": "Unassigned", "experiment": ""},
+        ]}
+        client = MagicMock()
+        client.get_collection.return_value = collection
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "active.json").write_text(json.dumps({"collection": "test"}))
+            with patch("chromadb.PersistentClient", return_value=client):
+                rows = index_inventory(path)
+        self.assertEqual([(r["title"], r["experiment"], r["url"], r["passages"]) for r in rows],
+                         [("BASS report", "BASS", "https://example.com/bass", 2),
+                          ("FLEX report", "FLEX", "https://example.com/flex.pdf", 1),
+                          ("Unassigned", "", "", 2)])
+
+    def test_index_inventory_without_active_index_is_empty(self):
+        from vector_store import index_inventory
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(index_inventory(Path(directory) / "absent"), [])
+
     def test_retrieval_skips_title_slides_and_contents(self):
         from vector_store import search
         collection = MagicMock()
@@ -155,6 +184,27 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("Model denied", message)
         self.assertNotIn("gsk_secret", message)
         self.assertNotIn("test-key", message)
+
+
+class ReferenceMetadataTests(unittest.TestCase):
+    def test_reference_metadata_is_complete_and_ieee(self):
+        from references import load_references, validate
+
+        self.assertEqual(validate(), [])
+        refs = {ref["ref_id"]: ref for ref in load_references()}
+        self.assertIn("Bhattacharjee", refs["ref-psi-25"]["authors"])
+        self.assertNotIn("Bhattachjee", refs["ref-psi-25"]["authors"])
+        self.assertIn("Fumiaki Takahashi", refs["ref-psi-26"]["authors"])
+        self.assertEqual(len(refs["ref-tm-20210011385"]["authors"].split(";")), 8)
+        self.assertEqual(refs["ref-psi-25"]["license"], "CC0-1.0")
+        self.assertEqual(refs["ref-tm-20210011385"]["license"], "NASA public use permitted")
+
+        for ref in refs.values():
+            self.assertTrue(ref["authors"])
+            self.assertTrue(ref["license"])
+            self.assertIn('"', ref["citation"])
+            self.assertIn("Available:", ref["citation"])
+            self.assertNotIn("(20", ref["citation"])
 
 
 if __name__ == "__main__":

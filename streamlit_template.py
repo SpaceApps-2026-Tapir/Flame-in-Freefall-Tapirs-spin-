@@ -12,6 +12,8 @@ import streamlit as st
 from evidence import KPA_SCALE, O2_SCALE, PRESETS, gap, load, rank
 from glossary import COLUMN_HELP, term, tip
 from rag import NO_EVIDENCE, NO_PASSAGES, answer, retrieve
+from references import dataset_reference, references_for
+from vector_store import index_inventory
 
 st.set_page_config(page_title="Flame in Freefall", page_icon=":material/local_fire_department:", layout="wide")
 
@@ -177,6 +179,15 @@ PAGE_CSS = """
   .infobox table {width: 100%; border-collapse: collapse;}
   .infobox th, .infobox td {border: none !important; border-top: 1px solid var(--atlas-divider) !important; background: transparent !important; color: inherit; padding: .2rem .3rem;}
   .infobox th {text-align: left; vertical-align: top; width: 45%;}
+  .index-table {width: 100%; border-collapse: collapse; margin: .5rem 0 1rem; font-size: .92rem;}
+  .index-table th, .index-table td {padding: .42rem .55rem; border-bottom: 1px solid var(--atlas-divider); text-align: left;}
+  .index-table th {color: var(--atlas-muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em;}
+  .index-table .num {text-align: right; font-variant-numeric: tabular-nums;}
+  .index-table tr.total td {font-weight: 700; border-top: 2px solid var(--atlas-border);}
+  .index-table a {text-decoration: none;}
+  .index-table a:hover {text-decoration: underline;}
+  .ref-item {margin: .65rem 0; line-height: 1.5;}
+  .ref-item .ref-meta, .ref-item .ref-authors {color: var(--atlas-muted); font-size: .85rem; margin-top: .1rem;}
   .hatnote {font-style: italic; color: var(--atlas-muted); margin-bottom: .6rem;}
 </style>"""
 
@@ -262,6 +273,11 @@ def records(frame, columns):
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_retrieve(question):
     return retrieve(question)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_index_inventory():
+    return index_inventory()
 
 
 # Streamlit reruns the whole page on every click; caching stops each rerun from calling Groq again.
@@ -389,6 +405,68 @@ def ask_page():
                     f"{escape(preset)} →</a>", unsafe_allow_html=True)
 
 
+def _ieee_citation_html(ref):
+    """Escape an IEEE citation and make its DOI or source URL clickable."""
+    citation = escape(ref.get("citation", ""))
+    target = (f"https://doi.org/{ref['doi']}" if ref.get("doi")
+              else ref.get("url", ""))
+    if not target:
+        return citation
+    url = escape(target, quote=True)
+    label = escape(target)
+    return citation.replace(
+        label,
+        f"<a href='{url}' target='_blank' rel='noopener noreferrer'>{label}</a>",
+        1,
+    )
+
+
+def reference_line(ref, show_citation=False, number=None):
+    """One reference: compact metadata, or the full IEEE citation on the About page."""
+    prefix = f"[{number}] " if number is not None else ""
+    title = escape(ref.get("title", "Untitled reference"))
+    year = f" ({escape(str(ref['year']))})" if ref.get("year") else ""
+    ident = f" <code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else ""
+    if ref.get("doi"):
+        doi = escape(ref["doi"], quote=True)
+        link = (f"<a href='https://doi.org/{doi}' target='_blank' rel='noopener noreferrer'>"
+                f"DOI {doi}</a>")
+    elif ref.get("url"):
+        link = (f"<a href='{escape(ref['url'], quote=True)}' target='_blank' rel='noopener noreferrer'>"
+                "source</a>")
+    else:
+        link = "no link recorded"
+    role = f" · {escape(ref['role'])}" if ref.get("role") else ""
+    authors = (f"<div class='ref-authors'>{escape(ref['authors'])}</div>"
+               if ref.get("authors") else "")
+    if show_citation and ref.get("citation"):
+        meta = " · ".join(part for part in [
+            f"<code>{escape(ref['identifier'])}</code>" if ref.get("identifier") else "",
+            escape(ref["role"]) if ref.get("role") else "",
+            f"License: {escape(ref['license'])}" if ref.get("license") else "",
+        ] if part)
+        meta = f"<div class='ref-meta'>{meta}</div>" if meta else ""
+        st.markdown(f"<div class='ref-item'>{prefix}{_ieee_citation_html(ref)}{meta}</div>",
+                    unsafe_allow_html=True)
+        return
+    st.markdown(f"<div class='ref-item'><b>{title}</b>{year}{ident} — {link}{role}{authors}</div>",
+                unsafe_allow_html=True)
+
+
+def render_references(experiment, show_citation=False, start=1):
+    """Render one experiment's references and return the next IEEE list number."""
+    refs = references_for(experiment)
+    if not refs:
+        st.caption("No references recorded for this experiment.")
+        return start
+    number = start
+    for ref in refs:
+        reference_line(ref, show_citation=show_citation,
+                       number=number if show_citation else None)
+        number += 1
+    return number
+
+
 # Chart colours: one fixed hue per pillar (colour-blind-safe set), shape per experiment.
 PILLAR_COLORS = {"prevention": "#2a78d6", "detection": "#eb6834", "suppression": "#1baf7a"}
 EXPERIMENT_SYMBOLS = {"BASS": "circle", "BASS-II": "diamond", "SAME": "circle", "SAME-R": "diamond", "FLEX": "circle"}
@@ -454,7 +532,15 @@ def test_details(r):
         if not pd.isna(r.assumed_fields):
             alert("info", f"{term('Nominal value', 'nominal')} filled in for: {escape(str(r.assumed_fields))} "
                           "(not logged per test).", label="Note")
-        st.caption(f"Source: {r.source_file} · {r.source_location}")
+        source = f"Source: {escape(str(r.source_file))} · {escape(str(r.source_location))}"
+        ref = dataset_reference(r.experiment)
+        if ref:
+            label = escape(ref.get("identifier") or "PSI dataset")
+            if ref.get("doi"):
+                source += f" · Dataset [{label}](https://doi.org/{ref['doi']})"
+            elif ref.get("url"):
+                source += f" · Dataset [{label}]({ref['url']})"
+        st.caption(source)
 
 
 def gap_banners(gaps, o2_tol, kpa_tol):
@@ -572,10 +658,10 @@ def scenario_page():
     if p is None:
         alert("info", "<b>Choose a mission scenario above</b> (ISS cabin, Moon base, exploration atmosphere, "
                       "spacesuit or Mars habitat). This report then shows:<br>"
-                      "1. a <b>key finding</b> in one sentence,<br>"
-                      "2. <b>where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
-                      "3. the <b>closest NASA tests</b>, with the original NASA notes,<br>"
-                      "4. a <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
+                      "1. A <b>key finding</b> in one sentence,<br>"
+                      "2. <b>Where the evidence stops</b>: which materials have no NASA tests near the scenario,<br>"
+                      "3. The <b>closest NASA tests</b>, with the original NASA notes,<br>"
+                      "4. A <b>map</b> of every test's oxygen and pressure, with the scenario on it.", label="Start here")
         h2("Test conditions map")
         conditions_map(pts, None, None, None, None)
         return
@@ -628,6 +714,66 @@ def scenario_page():
                     params[name] = f"{value:g}"
             st.query_params.from_dict({k: v for k, v in params.items() if v})
             st.rerun()
+
+
+INDEX_TOPIC = {"BASS": "Prevention", "BASS-II": "Prevention", "FLEX": "Suppression",
+               "SAME": "Detection", "SAME-R": "Detection"}
+INDEX_TOPIC_ORDER = ("Prevention", "Detection", "Suppression", "Background / cross-cutting")
+
+
+def index_tables(inventory):
+    """Group the active PDF index by atlas topic, plus one row per PDF."""
+    rows = []
+    for item in inventory:
+        topic = INDEX_TOPIC.get(item.get("experiment", ""), INDEX_TOPIC_ORDER[-1])
+        rows.append({"PDF": item.get("title", "Untitled PDF"), "Topic": topic,
+                     "Embeddings": item.get("passages", 0), "URL": item.get("url", "")})
+    grouped = {}
+    for row in rows:
+        bucket = grouped.setdefault(row["Topic"], {"Topic": row["Topic"], "PDFs": 0, "Embeddings": 0})
+        bucket["PDFs"] += 1
+        bucket["Embeddings"] += row["Embeddings"]
+
+    def topic_order(topic):
+        return INDEX_TOPIC_ORDER.index(topic) if topic in INDEX_TOPIC_ORDER else len(INDEX_TOPIC_ORDER)
+
+    summary = sorted(grouped.values(), key=lambda row: (topic_order(row["Topic"]), row["Topic"]))
+    summary.append({"Topic": "Total", "PDFs": len(rows),
+                    "Embeddings": sum(row["Embeddings"] for row in rows)})
+    rows.sort(key=lambda row: (topic_order(row["Topic"]), row["PDF"].casefold()))
+    return summary, rows
+
+
+def index_summary_html(summary):
+    body = "".join(
+        f"<tr{' class=total' if row['Topic'] == 'Total' else ''}>"
+        f"<td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['PDFs']:,}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in summary)
+    return ("<table class='index-table' aria-label='PDFs and embeddings by topic'>"
+            "<thead><tr><th scope='col'>Topic</th><th scope='col' class='num'>PDFs</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
+
+
+def index_pdf_html(rows):
+    def pdf_link(row):
+        title = escape(row["PDF"])
+        url = row.get("URL", "")
+        if not url:
+            return title
+        return (f"<a href='{escape(url, quote=True)}' target='_blank' rel='noopener noreferrer' "
+                f"title='Open PDF in a new tab'>{title} ↗</a>")
+
+    body = "".join(
+        f"<tr><td>{pdf_link(row)}</td><td>{escape(row['Topic'])}</td>"
+        f"<td class='num'>{row['Embeddings']:,}</td></tr>"
+        for row in rows)
+    return ("<table class='index-table' aria-label='Indexed PDFs, topics and embeddings'>"
+            "<thead><tr><th scope='col'>PDF</th><th scope='col'>Topic</th>"
+            "<th scope='col' class='num'>Embeddings</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>")
 
 
 def about_page():
@@ -694,22 +840,42 @@ def about_page():
             "Numbers come from the passages or the data table, never from the model's memory. "
             "Check the passages: a citation does not prove the claim is right.")
 
+        h2("NASA documents indexed")
+        inventory = cached_index_inventory()
+        if not inventory:
+            st.caption("No PDF index is available yet. Run `python scripts/ingest_documents.py` to build it.")
+        else:
+            summary, rows = index_tables(inventory)
+            st.markdown(f"The local search index contains **{len(rows)} PDFs** converted into "
+                        f"**{summary[-1]['Embeddings']:,} embedded passages**. Each passage is a 100-word "
+                        "overlapping chunk; the table groups them by the atlas topic they support.")
+            st.markdown(index_summary_html(summary), unsafe_allow_html=True)
+            with st.expander("See the PDFs in the index"):
+                st.markdown(index_pdf_html(rows), unsafe_allow_html=True)
+                st.caption("Click a PDF title to open it in a new tab.")
+            st.caption("Topics come from the experiment recorded in `documents/manifest.csv`; PDFs without "
+                       "a single experiment are grouped as background / cross-cutting.")
+
         h2("Experiments")
-        for name, pillar_label, desc in [
+        for name, pillar_label, desc, experiments in [
             ("BASS / BASS-II", "Prevention",
              f"{term('BASS')} / {term('BASS-II')}: how solid materials ({term('PMMA', 'pmma')} plastic, fabric such as "
              f"{term('Nomex', 'nomex')}, wax) ignite, spread and go out in low-speed {term('airflow')}. "
-             f"Run in the {term('MSG', 'msg')}."),
+             f"Run in the {term('MSG', 'msg')}.", ["BASS", "BASS-II"]),
             ("FLEX", "Suppression",
              f"{term('FLEX')}: {term('fuel droplets', 'liquid fuel droplet')} burned in different {term('O₂', 'o2')}, "
              f"pressure and {term('suppressant')} (CO₂, helium) mixtures. Run in the {term('CIR', 'cir')} with the "
-             f"{term('MDCA', 'mdca')}."),
+             f"{term('MDCA', 'mdca')}.", ["FLEX"]),
             ("SAME / SAME-R", "Detection",
              f"{term('SAME')} / {term('SAME-R')}: smoke particle sizes from heated spacecraft materials and how "
-             f"smoke detectors respond. Includes a {term('reference aerosol')}."),
+             f"smoke detectors respond. Includes a {term('reference aerosol')}.", ["SAME", "SAME-R"]),
         ]:
             with st.expander(f"{name}: {pillar_label}"):
                 st.markdown(desc, unsafe_allow_html=True)
+                for experiment in experiments:
+                    if len(experiments) > 1:
+                        st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
+                    render_references(experiment)
                 placeholder("TODO: summary card, key findings with page citations, small chart")
 
         h2("Applications on Earth")
@@ -726,7 +892,17 @@ def about_page():
             "- **Use of AI:** TODO list tools used (code assistance, Groq for answers).", unsafe_allow_html=True)
 
         h2("References")
-        placeholder("TODO [Pitch]: numbered list of PSI datasets (with DOI), NTRS reports, papers")
+        st.markdown("Datasets and reports used by this atlas, in IEEE style. Dataset DOIs resolve to the canonical "
+                    "NASA PSI landing page, where the experimental tables and files are published. "
+                    "Licenses are shown for each source.")
+        number = 1
+        for experiment in ["BASS", "BASS-II", "FLEX", "SAME", "SAME-R"]:
+            if references_for(experiment):
+                st.markdown(f"**{term(experiment)}**", unsafe_allow_html=True)
+                number = render_references(experiment, show_citation=True, start=number)
+        st.caption("Reference metadata is maintained in `references.csv` and linked to experiments in "
+                   "`experiment_references.csv`. See `THIRD_PARTY_NOTICES.md` for the full license audit. "
+                   "Row-level provenance remains visible in the test details.")
 
 
 # ====================================================================== DATA EXPLORER (pick columns → filter → results)

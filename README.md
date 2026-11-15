@@ -107,17 +107,19 @@ This is a Streamlit application with `package = false`; it runs directly from
 The current configuration requires Python 3.14 or newer, matching the existing
 development environment. `uv` manages `.venv` automatically.
 
-**3. Make sure the evidence files are available.** The app needs `evidence.py`
-and `master_tests.csv` alongside `streamlit_template.py`. If they are missing
-on your branch, you can temporarily copy them from `rank-and-gap` without
-switching branches:
+**3. Make sure the evidence files are available.** The app needs `evidence.py`,
+`master_tests.csv`, `references.py`, `references.csv`, and
+`experiment_references.csv` alongside `streamlit_template.py`. If the evidence
+files are missing on your branch, you can temporarily copy them from
+`rank-and-gap` without switching branches:
 
 ```bash
 git restore --source=rank-and-gap -- evidence.py master_tests.csv
 ```
 
 If you only have the remote branch, use `--source=origin/rank-and-gap` instead.
-Keep these files uncommitted if you only need them for local testing.
+Keep these files uncommitted if you only need them for local testing. The
+reference files are tracked on `feat/experiment-references`.
 
 **4. Start the Streamlit app:**
 
@@ -132,11 +134,13 @@ Use the full command above: `uv run streamlit_template.py` executes a regular
 Python script and produces `missing ScriptRunContext` warnings because the
 Streamlit server has not started.
 
-The evidence module imports NumPy and pandas. If either is missing, install
-them for the run without changing the project's dependency files:
+The evidence module imports NumPy and pandas. Both are declared in
+`pyproject.toml` and pinned in `uv.lock`, so `uv sync --locked` installs them.
+`requirements.txt` is generated from the lock file and is not the source of
+truth:
 
 ```bash
-uv run --with numpy --with pandas streamlit run streamlit_template.py
+uv export --format requirements-txt --no-hashes --output-file requirements.txt
 ```
 
 If you see `No module named 'evidence'`, check step 3. If the error mentions
@@ -150,6 +154,27 @@ If you see `No module named 'evidence'`, check step 3. If the error mentions
 | `uv add --dev pytest` | Add a development dependency. |
 | `uv remove requests` | Remove a dependency. |
 | `uv sync` | Sync the environment with the project's dependencies. |
+| `uv export --format requirements-txt --no-hashes --output-file requirements.txt` | Regenerate `requirements.txt` from `uv.lock`. |
 | `uv run python -c "print('Hello from uv')"` | Run Python in the project's environment. |
 
 With `uv run`, you do not need to activate the environment manually. Track `pyproject.toml` and `uv.lock` in Git, and add `.venv/` to `.gitignore`. See the [official project guide](https://docs.astral.sh/uv/guides/projects/) for more details.
+
+## License
+
+The original code, documentation and the logo in this repository are licensed
+under the MIT License. See [LICENSE](LICENSE).
+
+Third-party data and documents keep their own terms. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full audit. In short:
+
+- The five NASA PSI datasets used by the atlas are released under **CC0-1.0**.
+- The BASS-II Summary Report is a NASA/NTRS public-use document, not CC0.
+- NASA PDFs are downloaded from the team's Google Drive folder and are not
+  tracked in Git. One of them, SAE paper 2005-01-2930, is **copyright SAE
+  International** and is not covered by this repository's MIT license. Confirm
+  permission before redistributing it.
+- Python dependencies are permissively licensed (MIT, Apache-2.0, BSD and
+  MPL-2.0); there are no GPL, AGPL, SSPL or BUSL dependencies.
+
+This license does not grant rights to NASA names, logos or trademarks. This
+project is not affiliated with or endorsed by NASA.
